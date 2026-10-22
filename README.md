@@ -58,5 +58,9 @@ pip install torch torchvision numpy matplotlib pandas scikit-learn
 MA416Project/
 ├── .gitignore       # Standard Python, checkpoint, and dataset ignore rules
 ├── README.md        # Project documentation
-└── defungi/         # Local dataset folder (ignored from Git)
+├── defungi/         # Local dataset folder (ignored from Git)
+└── src/
+    └── baseline/
+        └── Baseline.ipynb  # Statistical baseline benchmarks and evaluation
 ```
+
