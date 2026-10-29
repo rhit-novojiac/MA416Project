@@ -5,7 +5,7 @@ Training, evaluation, and benchmark verification script for ResNet-18 on DeFungi
 import argparse
 import sys
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Sized, Tuple, cast
 
 # Ensure current directory is in sys.path for direct script and standalone execution
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -24,7 +24,7 @@ from sklearn.metrics import (
 )
 import torch
 import torch.nn as nn
-from tqdm import tqdm
+from tqdm import tqdm  # type: ignore[import-untyped]
 
 # Fallback between relative and absolute imports
 try:
@@ -105,7 +105,7 @@ def evaluate(
     acc = accuracy_score(y_true, y_pred)
     macro_f1 = f1_score(y_true, y_pred, average="macro", zero_division=0)
 
-    return eval_loss, acc, macro_f1, y_true, y_pred
+    return float(eval_loss), float(acc), float(macro_f1), y_true, y_pred
 
 
 def save_training_plots(history: Dict[str, List[float]], save_path: Path) -> None:
@@ -147,7 +147,7 @@ def save_confusion_matrix_plot(y_true: np.ndarray, y_pred: np.ndarray, classes: 
     disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=classes)
 
     fig, ax = plt.subplots(figsize=(7, 6))
-    disp.plot(cmap="Blues", ax=ax, colorbar=True)
+    disp.plot(cmap="Blues", ax=cast(Any, ax), colorbar=True)
     plt.title("ResNet-18 Transfer Learning - Confusion Matrix")
     plt.grid(False)
     plt.tight_layout()
@@ -172,6 +172,7 @@ def main():
     parser.add_argument("--checkpoint-dir", type=str, default="checkpoints", help="Directory to save models")
     parser.add_argument("--plots-dir", type=str, default="plots", help="Directory to save figures")
     parser.add_argument("--dataset-dir", type=str, default=None, help="Explicit path to defungi directory")
+    parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume training from")
     args = parser.parse_args()
 
     # Hardware setup
@@ -197,8 +198,8 @@ def main():
         num_workers=args.num_workers
     )
     print(f"Classes ({len(classes)}): {classes}")
-    print(f"Train samples: {len(train_loader.dataset):,}")
-    print(f"Test samples:  {len(test_loader.dataset):,}")
+    print(f"Train samples: {len(cast(Sized, train_loader.dataset)):,}")
+    print(f"Test samples:  {len(cast(Sized, test_loader.dataset)):,}")
 
     # Model initialization
     print(f"\n[2/4] Initializing Pre-trained ResNet-18 with '{args.decoder_type}' Decoder...")
@@ -225,7 +226,7 @@ def main():
             print(f"  {cls_name}: {w:.3f}")
 
     optimizer = torch.optim.Adam(
-        model.fc.parameters(),
+        [p for p in model.parameters() if p.requires_grad],
         lr=args.lr,
         weight_decay=args.weight_decay
     )
@@ -237,12 +238,34 @@ def main():
     else:
         scheduler = None
 
-    # Training loop
-    print(f"\n[3/4] Training for {args.epochs} epochs...")
-    history = {"train_loss": [], "train_acc": [], "val_loss": [], "val_acc": [], "val_macro_f1": []}
+    # Resume from checkpoint if requested
+    start_epoch = 1
     best_macro_f1 = -1.0
+    latest_model_path = ckpt_dir / f"resnet18_{args.decoder_type}_latest.pt"
 
-    for epoch in range(1, args.epochs + 1):
+    if args.resume:
+        resume_path = Path(args.resume)
+        if resume_path.exists():
+            print(f"\nResuming training from checkpoint: {resume_path}")
+            ckpt = torch.load(resume_path, map_location=device)
+            model.load_state_dict(ckpt["model_state_dict"])
+            if "optimizer_state_dict" in ckpt:
+                optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+            if "best_macro_f1" in ckpt:
+                best_macro_f1 = ckpt["best_macro_f1"]
+            if "epoch" in ckpt:
+                start_epoch = ckpt["epoch"] + 1
+            print(f"Loaded checkpoint from epoch {ckpt.get('epoch', 'N/A')}, previous best F1: {best_macro_f1:.4f}")
+        else:
+            raise FileNotFoundError(f"Checkpoint not found at: {args.resume}")
+
+    end_epoch = start_epoch + args.epochs - 1
+
+    # Training loop
+    print(f"\n[3/4] Training epochs {start_epoch} to {end_epoch} ({args.epochs} total)...")
+    history = {"train_loss": [], "train_acc": [], "val_loss": [], "val_acc": [], "val_macro_f1": []}
+
+    for epoch in range(start_epoch, end_epoch + 1):
         train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimizer, device)
         val_loss, val_acc, val_macro_f1, _, _ = evaluate(model, test_loader, criterion, device)
 
@@ -252,17 +275,23 @@ def main():
         history["val_acc"].append(val_acc)
         history["val_macro_f1"].append(val_macro_f1)
 
+        checkpoint_state = {
+            "epoch": epoch,
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "best_macro_f1": best_macro_f1,
+            "val_acc": val_acc,
+            "classes": classes
+        }
+
+        # Save latest checkpoint after every epoch
+        torch.save(checkpoint_state, latest_model_path)
+
         is_best = val_macro_f1 > best_macro_f1
         if is_best:
             best_macro_f1 = val_macro_f1
-            torch.save({
-                "epoch": epoch,
-                "model_state_dict": model.state_dict(),
-                "optimizer_state_dict": optimizer.state_dict(),
-                "best_macro_f1": best_macro_f1,
-                "val_acc": val_acc,
-                "classes": classes
-            }, best_model_path)
+            checkpoint_state["best_macro_f1"] = best_macro_f1
+            torch.save(checkpoint_state, best_model_path)
             flag = " [BEST SAVED]"
         else:
             flag = ""
@@ -274,7 +303,7 @@ def main():
                 scheduler.step()
 
         print(
-            f"Epoch {epoch:2d}/{args.epochs:2d} | "
+            f"Epoch {epoch:2d}/{end_epoch:2d} | "
             f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc*100:.2f}% | "
             f"Val Loss: {val_loss:.4f} | Val Acc: {val_acc*100:.2f}% | "
             f"Val F1: {val_macro_f1:.4f}{flag}"

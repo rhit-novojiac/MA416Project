@@ -4,7 +4,7 @@ Data loading and augmentation pipeline for DeFungi microscopic image dataset.
 
 import sys
 from pathlib import Path
-from typing import Optional, Tuple, List, Dict
+from typing import Optional, Tuple, List, Dict, Sized, cast
 
 # Ensure current directory is in sys.path
 _MODULE_DIR = Path(__file__).resolve().parent
@@ -52,22 +52,24 @@ class DeFungiDataset(Dataset):
     """PyTorch Dataset for DeFungi microscopic image classification."""
 
     def __init__(self, df: pd.DataFrame, transform: Optional[transforms.Compose] = None):
-        self.filepaths = df["filepath"].tolist()
-        self.labels = df["label"].tolist()
+        self.filepaths: List[str] = [str(p) for p in df["filepath"].tolist()]
+        self.labels: List[int] = [int(l) for l in df["label"].tolist()]
         self.transform = transform
 
     def __len__(self) -> int:
         return len(self.filepaths)
 
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
-        img_path = self.filepaths[idx]
+    def __getitem__(self, index: int) -> Tuple[torch.Tensor, int]:
+        img_path = self.filepaths[index]
         image = Image.open(img_path).convert("RGB")
-        label = self.labels[idx]
+        label = self.labels[index]
 
-        if self.transform:
-            image = self.transform(image)
+        if self.transform is not None:
+            tensor_image = self.transform(image)
+        else:
+            tensor_image = transforms.functional.to_tensor(image)
 
-        return image, label
+        return cast(torch.Tensor, tensor_image), int(label)
 
 
 def get_transforms() -> Tuple[transforms.Compose, transforms.Compose]:
@@ -177,7 +179,7 @@ def get_dataloaders(
 if __name__ == "__main__":
     train_l, test_l, cls_list, c_weights = get_dataloaders(batch_size=16, num_workers=0)
     print(f"Loaded classes: {cls_list}")
-    print(f"Train samples: {len(train_l.dataset):,}, Batches: {len(train_l)}")
-    print(f"Test samples: {len(test_l.dataset):,}, Batches: {len(test_l)}")
+    print(f"Train samples: {len(cast(Sized, train_l.dataset)):,}, Batches: {len(train_l)}")
+    print(f"Test samples: {len(cast(Sized, test_l.dataset)):,}, Batches: {len(test_l)}")
     print(f"Inverse class weights: {c_weights.tolist()}")
 
