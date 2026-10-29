@@ -4,7 +4,7 @@ Model definitions for transfer learning on the DeFungi dataset using ResNet-18.
 
 import sys
 from pathlib import Path
-from typing import Tuple
+from typing import Tuple, cast
 
 # Ensure current directory is in sys.path
 _MODULE_DIR = Path(__file__).resolve().parent
@@ -48,29 +48,38 @@ def build_resnet18(
     in_features = model.fc.in_features  # 512 for ResNet-18
 
     if decoder_type == "linear":
-        model.fc = nn.Sequential(
-            nn.Dropout(p=dropout),
-            nn.Linear(in_features, num_classes)
+        model.fc = cast(
+            nn.Linear,
+            nn.Sequential(
+                nn.Dropout(p=dropout),
+                nn.Linear(in_features, num_classes)
+            )
         )
     elif decoder_type == "mlp":
-        model.fc = nn.Sequential(
-            nn.Linear(in_features, 256),
-            nn.BatchNorm1d(256),
-            nn.ReLU(inplace=True),
-            nn.Dropout(p=dropout),
-            nn.Linear(256, num_classes)
+        model.fc = cast(
+            nn.Linear,
+            nn.Sequential(
+                nn.Linear(in_features, 256),
+                nn.BatchNorm1d(256),
+                nn.ReLU(inplace=True),
+                nn.Dropout(p=dropout),
+                nn.Linear(256, num_classes)
+            )
         )
     elif decoder_type == "mlp_deep":
-        model.fc = nn.Sequential(
-            nn.Linear(in_features, 256),
-            nn.BatchNorm1d(256),
-            nn.GELU(),
-            nn.Dropout(p=dropout),
-            nn.Linear(256, 128),
-            nn.BatchNorm1d(128),
-            nn.GELU(),
-            nn.Dropout(p=dropout),
-            nn.Linear(128, num_classes)
+        model.fc = cast(
+            nn.Linear,
+            nn.Sequential(
+                nn.Linear(in_features, 256),
+                nn.BatchNorm1d(256),
+                nn.GELU(),
+                nn.Dropout(p=dropout),
+                nn.Linear(256, 128),
+                nn.BatchNorm1d(128),
+                nn.GELU(),
+                nn.Dropout(p=dropout),
+                nn.Linear(128, num_classes)
+            )
         )
     else:
         raise ValueError(f"Unknown decoder_type '{decoder_type}'. Must be 'linear', 'mlp', or 'mlp_deep'.")
@@ -123,4 +132,3 @@ if __name__ == "__main__":
     dummy_input = torch.randn(2, 3, 224, 224)
     output = net(dummy_input)
     print(f"  Forward pass output shape: {output.shape} (Expected: [2, 5])")
-

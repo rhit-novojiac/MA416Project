@@ -17,6 +17,7 @@ from sklearn.model_selection import train_test_split
 import torch
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
+import torchvision.transforms.functional as F_t
 
 
 def find_dataset_dir(custom_path: Optional[str] = None) -> Path:
@@ -67,9 +68,9 @@ class DeFungiDataset(Dataset):
         if self.transform is not None:
             tensor_image = self.transform(image)
         else:
-            tensor_image = transforms.functional.to_tensor(image)
+            tensor_image = F_t.to_tensor(image)
 
-        return cast(torch.Tensor, tensor_image), int(label)
+        return cast(torch.Tensor, tensor_image), label
 
 
 def get_transforms() -> Tuple[transforms.Compose, transforms.Compose]:
