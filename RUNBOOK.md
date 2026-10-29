@@ -195,7 +195,7 @@ Upon completion, `train.py` automatically generates:
 If teammates see import warnings (`torchvision`, `torch`) in their editor:
 
 1. Ensure the Python interpreter in their IDE is set to their active virtual environment.
-2. The project contains a generic [`pyproject.toml`](file:///c:/Users/novojiac/gitOrganized/MA416Project/pyproject.toml) where the interpreter path can be customized:
+2. The project contains a generic [`pyproject.toml`](pyproject.toml) where the interpreter path can be customized:
    ```toml
    [tool.pyrefly]
    # Adjust to point to your local virtualenv if not in .venv
