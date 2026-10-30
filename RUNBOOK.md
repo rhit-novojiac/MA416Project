@@ -103,12 +103,21 @@ All directories and parameters can be overridden via CLI flags to match any team
 | `--decoder-type` | `str` | `linear` | Head architecture: `linear`, `mlp`, or `mlp_deep`. |
 | `--scheduler` | `str` | `cosine` | LR schedule: `cosine`, `plateau`, or `none`. |
 | `--weight-decay` | `float` | `1e-4` | L2 weight decay for the Adam optimizer. |
-| `--num-workers` | `int` | `2` | Number of DataLoader worker processes (`0` for Windows debugging). |
+| `--num-workers` | `int` | `2` | Number of DataLoader worker processes (`0` for Windows debugging, `8`-`16` on cluster nodes). |
 | `--no-class-weights`| `flag` | `False` | Disables inverse-frequency weighting in CrossEntropyLoss. |
+| `--amp` / `--no-amp`| `flag` | `Auto` | Automatic Mixed Precision (enabled automatically when CUDA is present). |
+| `--no-multi-gpu` | `flag` | `False` | Disables `DataParallel` across multiple GPU devices/shards. |
+| `--compile` | `flag` | `False` | Enables `torch.compile()` PyTorch 2.x Inductor kernel fusion. |
 | `--resume` | `str` | `None` | Path to a `.pt` checkpoint file to resume training from. |
 | `--dataset-dir` | `str` | `None` | Custom path to the `defungi/` directory if stored outside root. |
 | `--checkpoint-dir`| `str` | `checkpoints` | Custom target folder for saved model weights. |
 | `--plots-dir` | `str` | `plots` | Custom target folder for evaluation charts and confusion matrices. |
+
+#### High-Performance Multi-GPU / Multi-Shard Execution:
+On a powerful cluster node or multi-GPU server (e.g., 8 GPU shards):
+```bash
+python src/transfer/train.py --batch-size 128 --num-workers 8 --lr 0.002 --epochs 15
+```
 
 #### Example: Specifying Custom Paths
 If your dataset is located in another folder or drive:

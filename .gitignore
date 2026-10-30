@@ -53,6 +53,15 @@ datasets/
 *.tar.gz
 *.tar
 
+# Type checker & linter caches
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pytest_cache/
+.ruff_cache/
+.pytype/
+.pyre/
+
 # IDE & Editor settings
 .vscode/
 .idea/

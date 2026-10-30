@@ -60,7 +60,6 @@ def build_resnet18(
             nn.Linear,
             nn.Sequential(
                 nn.Linear(in_features, 256),
-                nn.BatchNorm1d(256),
                 nn.ReLU(inplace=True),
                 nn.Dropout(p=dropout),
                 nn.Linear(256, num_classes)
@@ -71,14 +70,12 @@ def build_resnet18(
             nn.Linear,
             nn.Sequential(
                 nn.Linear(in_features, 256),
-                nn.BatchNorm1d(256),
-                nn.GELU(),
+                nn.ReLU(inplace=True),
                 nn.Dropout(p=dropout),
-                nn.Linear(256, 128),
-                nn.BatchNorm1d(128),
-                nn.GELU(),
+                nn.Linear(256, 256),
+                nn.ReLU(inplace=True),
                 nn.Dropout(p=dropout),
-                nn.Linear(128, num_classes)
+                nn.Linear(256, num_classes)
             )
         )
     else:

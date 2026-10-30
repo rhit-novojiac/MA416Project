@@ -1,0 +1,19 @@
+# PyTorch & Computer Vision (For CUDA GPU, see installation command below)
+torch
+torchvision
+
+# Data Processing & Machine Learning
+numpy
+pandas
+scikit-learn
+pillow
+
+# Plotting & Progress Bar
+matplotlib
+seaborn
+tqdm
+
+# Notebook / Course Support
+ipykernel
+huggingface_hub
+

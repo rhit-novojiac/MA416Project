@@ -158,12 +158,16 @@ def get_dataloaders(
     train_dataset = DeFungiDataset(train_df, transform=train_transform)
     test_dataset = DeFungiDataset(test_df, transform=eval_transform)
 
+    pin_memory = torch.cuda.is_available()
+    persistent_workers = num_workers > 0
+
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
         num_workers=num_workers,
-        pin_memory=torch.cuda.is_available()
+        pin_memory=pin_memory,
+        persistent_workers=persistent_workers
     )
 
     test_loader = DataLoader(
@@ -171,7 +175,8 @@ def get_dataloaders(
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
-        pin_memory=torch.cuda.is_available()
+        pin_memory=pin_memory,
+        persistent_workers=persistent_workers
     )
 
     return train_loader, test_loader, classes, class_weights

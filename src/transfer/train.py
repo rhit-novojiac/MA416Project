@@ -5,7 +5,7 @@ Training, evaluation, and benchmark verification script for ResNet-18 on DeFungi
 import argparse
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Sized, Tuple, cast
+from typing import Any, Dict, List, Optional, Sized, Tuple, cast
 
 # Ensure current directory is in sys.path for direct script and standalone execution
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -24,6 +24,7 @@ from sklearn.metrics import (
 )
 import torch
 import torch.nn as nn
+from torch.amp import GradScaler, autocast
 from tqdm import tqdm  # type: ignore[import-untyped]
 
 # Fallback between relative and absolute imports
@@ -35,14 +36,25 @@ except (ImportError, ValueError):
     from model import build_resnet18, get_parameter_counts
 
 
+def get_base_module(model: nn.Module) -> nn.Module:
+    """Unwraps DataParallel or compiled wrappers to access the root nn.Module."""
+    if hasattr(model, "module"):
+        return cast(nn.Module, getattr(model, "module"))
+    if hasattr(model, "_orig_mod"):
+        return cast(nn.Module, getattr(model, "_orig_mod"))
+    return model
+
+
 def train_one_epoch(
     model: nn.Module,
     dataloader: torch.utils.data.DataLoader,
     criterion: nn.Module,
     optimizer: torch.optim.Optimizer,
-    device: torch.device
+    device: torch.device,
+    scaler: Optional[GradScaler] = None,
+    use_amp: bool = False
 ) -> Tuple[float, float]:
-    """Runs a single training epoch."""
+    """Runs a single training epoch with optional mixed precision."""
     model.train()
     running_loss = 0.0
     correct = 0
@@ -50,14 +62,21 @@ def train_one_epoch(
 
     pbar = tqdm(dataloader, desc="Training", leave=False)
     for images, labels in pbar:
-        images = images.to(device)
-        labels = labels.to(device)
+        images = images.to(device, non_blocking=True)
+        labels = labels.to(device, non_blocking=True)
 
-        optimizer.zero_grad()
-        outputs = model(images)
-        loss = criterion(outputs, labels)
-        loss.backward()
-        optimizer.step()
+        optimizer.zero_grad(set_to_none=True)
+        with autocast(device_type=device.type, enabled=use_amp):
+            outputs = model(images)
+            loss = criterion(outputs, labels)
+
+        if use_amp and scaler is not None:
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss.backward()
+            optimizer.step()
 
         running_loss += loss.item() * images.size(0)
         _, preds = torch.max(outputs, 1)
@@ -75,7 +94,8 @@ def evaluate(
     model: nn.Module,
     dataloader: torch.utils.data.DataLoader,
     criterion: nn.Module,
-    device: torch.device
+    device: torch.device,
+    use_amp: bool = False
 ) -> Tuple[float, float, float, np.ndarray, np.ndarray]:
     """Evaluates the model on test/validation set and computes metrics."""
     model.eval()
@@ -85,11 +105,12 @@ def evaluate(
 
     with torch.no_grad():
         for images, labels in dataloader:
-            images = images.to(device)
-            labels = labels.to(device)
+            images = images.to(device, non_blocking=True)
+            labels = labels.to(device, non_blocking=True)
 
-            outputs = model(images)
-            loss = criterion(outputs, labels)
+            with autocast(device_type=device.type, enabled=use_amp):
+                outputs = model(images)
+                loss = criterion(outputs, labels)
 
             running_loss += loss.item() * images.size(0)
             _, preds = torch.max(outputs, 1)
@@ -113,7 +134,7 @@ def save_training_plots(history: Dict[str, List[float]], save_path: Path) -> Non
     save_path.parent.mkdir(parents=True, exist_ok=True)
     epochs = range(1, len(history["train_loss"]) + 1)
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
     # Loss subplot
     ax1.plot(epochs, history["train_loss"], "o-", label="Train Loss", color="#1f77b4")
@@ -169,6 +190,14 @@ def main():
                         help="Learning rate scheduler")
     parser.add_argument("--num-workers", type=int, default=2, help="DataLoader worker processes")
     parser.add_argument("--no-class-weights", action="store_true", help="Disable inverse class weighting")
+    parser.add_argument("--amp", action="store_true", default=torch.cuda.is_available(),
+                        help="Enable Automatic Mixed Precision (AMP)")
+    parser.add_argument("--no-amp", action="store_false", dest="amp",
+                        help="Disable Automatic Mixed Precision")
+    parser.add_argument("--no-multi-gpu", action="store_true",
+                        help="Disable DataParallel across multiple GPU shards")
+    parser.add_argument("--compile", action="store_true",
+                        help="Enable torch.compile() for PyTorch 2.x acceleration")
     parser.add_argument("--checkpoint-dir", type=str, default="checkpoints", help="Directory to save models")
     parser.add_argument("--plots-dir", type=str, default="plots", help="Directory to save figures")
     parser.add_argument("--dataset-dir", type=str, default=None, help="Explicit path to defungi directory")
@@ -177,10 +206,14 @@ def main():
 
     # Hardware setup
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    num_gpus = torch.cuda.device_count() if device.type == "cuda" else 0
     print("=" * 60)
     print(f"Device: {device}")
     if device.type == "cuda":
-        print(f"GPU: {torch.cuda.get_device_name(0)}")
+        print(f"Primary GPU:                 {torch.cuda.get_device_name(0)}")
+        print(f"Available GPUs / Shards:     {num_gpus}")
+        torch.backends.cudnn.benchmark = True
+        print("cuDNN Benchmark:             Enabled (optimal conv algorithm tuning)")
     print("=" * 60)
 
     # Output directories
@@ -203,7 +236,7 @@ def main():
 
     # Model initialization
     print(f"\n[2/4] Initializing Pre-trained ResNet-18 with '{args.decoder_type}' Decoder...")
-    model = build_resnet18(
+    model: nn.Module = build_resnet18(
         num_classes=len(classes),
         freeze_backbone=True,
         dropout=args.dropout,
@@ -231,6 +264,23 @@ def main():
         weight_decay=args.weight_decay
     )
 
+    # Multi-GPU / Multi-shard parallelization
+    if num_gpus > 1 and not args.no_multi_gpu:
+        print(f"\n[Parallelism] Distributing model across all {num_gpus} GPU devices/shards with DataParallel.")
+        model = cast(nn.Module, nn.DataParallel(model))
+
+    if args.compile and hasattr(torch, "compile"):
+        print("[Optimization] Applying torch.compile() kernel fusion.")
+        try:
+            model = cast(nn.Module, torch.compile(model))
+        except Exception as e:
+            print(f"[Warning] torch.compile() skipped: {e}")
+
+    use_amp = bool(args.amp and device.type == "cuda")
+    scaler = GradScaler("cuda", enabled=use_amp)
+    if use_amp:
+        print("[Optimization] Automatic Mixed Precision (AMP) enabled for Tensor Cores.")
+
     if args.scheduler == "cosine":
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
     elif args.scheduler == "plateau":
@@ -248,26 +298,43 @@ def main():
         if resume_path.exists():
             print(f"\nResuming training from checkpoint: {resume_path}")
             ckpt = torch.load(resume_path, map_location=device)
-            model.load_state_dict(ckpt["model_state_dict"])
-            if "optimizer_state_dict" in ckpt:
-                optimizer.load_state_dict(ckpt["optimizer_state_dict"])
-            if "best_macro_f1" in ckpt:
-                best_macro_f1 = ckpt["best_macro_f1"]
-            if "epoch" in ckpt:
-                start_epoch = ckpt["epoch"] + 1
-            print(f"Loaded checkpoint from epoch {ckpt.get('epoch', 'N/A')}, previous best F1: {best_macro_f1:.4f}")
+            raw_model = get_base_module(model)
+            raw_model.load_state_dict(ckpt["model_state_dict"])
+            optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+            start_epoch = ckpt["epoch"] + 1
+            best_macro_f1 = ckpt.get("best_macro_f1", -1.0)
+            print(f"Resumed from epoch {ckpt['epoch']} (Best Macro F1 so far: {best_macro_f1:.4f})")
         else:
-            raise FileNotFoundError(f"Checkpoint not found at: {args.resume}")
+            print(f"Warning: Checkpoint '{args.resume}' not found. Starting from scratch.")
 
+    history: Dict[str, List[float]] = {
+        "train_loss": [],
+        "train_acc": [],
+        "val_loss": [],
+        "val_acc": [],
+        "val_macro_f1": []
+    }
+
+    print(f"\n[3/4] Training for {args.epochs} Epochs (Starting from Epoch {start_epoch})...")
     end_epoch = start_epoch + args.epochs - 1
 
-    # Training loop
-    print(f"\n[3/4] Training epochs {start_epoch} to {end_epoch} ({args.epochs} total)...")
-    history = {"train_loss": [], "train_acc": [], "val_loss": [], "val_acc": [], "val_macro_f1": []}
-
     for epoch in range(start_epoch, end_epoch + 1):
-        train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimizer, device)
-        val_loss, val_acc, val_macro_f1, _, _ = evaluate(model, test_loader, criterion, device)
+        train_loss, train_acc = train_one_epoch(
+            model=model,
+            dataloader=train_loader,
+            criterion=criterion,
+            optimizer=optimizer,
+            device=device,
+            scaler=scaler,
+            use_amp=use_amp
+        )
+        val_loss, val_acc, val_macro_f1, _, _ = evaluate(
+            model=model,
+            dataloader=test_loader,
+            criterion=criterion,
+            device=device,
+            use_amp=use_amp
+        )
 
         history["train_loss"].append(train_loss)
         history["train_acc"].append(train_acc)
@@ -275,9 +342,10 @@ def main():
         history["val_acc"].append(val_acc)
         history["val_macro_f1"].append(val_macro_f1)
 
+        raw_model = get_base_module(model)
         checkpoint_state = {
             "epoch": epoch,
-            "model_state_dict": model.state_dict(),
+            "model_state_dict": raw_model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "best_macro_f1": best_macro_f1,
             "val_acc": val_acc,
@@ -312,8 +380,15 @@ def main():
     # Final evaluation using best model
     print("\n[4/4] Final Evaluation on 1,823 Test Images...")
     checkpoint = torch.load(best_model_path, map_location=device)
-    model.load_state_dict(checkpoint["model_state_dict"])
-    _, test_acc, test_macro_f1, y_true, y_pred = evaluate(model, test_loader, criterion, device)
+    raw_model = get_base_module(model)
+    raw_model.load_state_dict(checkpoint["model_state_dict"])
+    _, test_acc, test_macro_f1, y_true, y_pred = evaluate(
+        model=model,
+        dataloader=test_loader,
+        criterion=criterion,
+        device=device,
+        use_amp=use_amp
+    )
 
     bal_acc = balanced_accuracy_score(y_true, y_pred)
     macro_prec = precision_score(y_true, y_pred, average="macro", zero_division=0)
@@ -343,23 +418,19 @@ def main():
     print(f"{'Balanced Accuracy':<22} | {'20.00%':<18} | {f'{bal_acc*100:.2f}%':<18} | {f'+{(bal_acc*100 - 20.00):.2f}%':<10}")
     print(f"{'Macro Precision':<22} | {'9.67%':<18} | {f'{macro_prec*100:.2f}%':<18} | {f'+{(macro_prec*100 - 9.67):.2f}%':<10}")
     print(f"{'Macro Recall':<22} | {'20.00%':<18} | {f'{macro_rec*100:.2f}%':<18} | {f'+{(macro_rec*100 - 20.00):.2f}%':<10}")
-    print(f"{'Macro F1-Score':<22} | {'13.03%':<18} | {f'{test_macro_f1*100:.2f}%':<18} | {f'+{(test_macro_f1*100 - 13.03):.2f}%':<10}")
-    print(f"{'Weighted F1-Score':<22} | {'31.49%':<18} | {f'{weighted_f1*100:.2f}%':<18} | {f'+{(weighted_f1*100 - 31.49):.2f}%':<10}")
-    print("=" * 75)
+    print(f"{'Macro F1':<22} | {'13.03%':<18} | {f'{test_macro_f1*100:.2f}%':<18} | {f'+{(test_macro_f1*100 - 13.03):.2f}%':<10}")
+    print("=" * 60)
 
     # Save visual assets
-    curves_file = plots_dir / f"resnet18_{args.decoder_type}_training_curves.png"
-    cm_file = plots_dir / f"resnet18_{args.decoder_type}_confusion_matrix.png"
-    save_training_plots(history, curves_file)
-    save_confusion_matrix_plot(y_true, y_pred, classes, cm_file)
+    curves_path = plots_dir / f"resnet18_{args.decoder_type}_training_curves.png"
+    cm_path = plots_dir / f"resnet18_{args.decoder_type}_confusion_matrix.png"
+    save_training_plots(history, curves_path)
+    save_confusion_matrix_plot(y_true, y_pred, classes, cm_path)
 
-    # Also save standard checkpoint if default linear
     if args.decoder_type == "linear":
-        default_path = ckpt_dir / "resnet18_defungi_best.pt"
-        torch.save(checkpoint, default_path)
+        torch.save(checkpoint, ckpt_dir / "resnet18_defungi_best.pt")
     print(f"\nArtifacts generated successfully in {plots_dir}/ and {ckpt_dir}/")
 
 
 if __name__ == "__main__":
     main()
-
