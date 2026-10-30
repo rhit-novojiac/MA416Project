@@ -1,9 +1,0 @@
-# Modifiable interpreter path:
-# - Standard project venv: ".venv/Scripts/python.exe" (Windows) or ".venv/bin/python" (macOS/Linux)
-# - Shared course venv: update to your local path below
-python-interpreter-path = ".venv/Scripts/python.exe"
-
-search-path = [
-    "src",
-    "src/transfer"
-]

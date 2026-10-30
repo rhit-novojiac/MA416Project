@@ -96,7 +96,8 @@ All directories and parameters can be overridden via CLI flags to match any team
 
 | Argument | Type | Default | Description |
 |---|---|---|---|
-| `--epochs` | `int` | `10` | Total number of epochs to train. |
+| `--epochs` | `int` | `10` | Number of additional epochs to train in this session. |
+| `--total-epochs` | `int` | `None` | Target total epochs count (overrides `--epochs` to reach this specific epoch). |
 | `--batch-size` | `int` | `32` | Batch size for training and validation DataLoaders. |
 | `--lr` | `float` | `0.001` | Learning rate for the trainable decoder head. |
 | `--dropout` | `float` | `0.3` | Dropout probability applied before classification. |
@@ -106,12 +107,13 @@ All directories and parameters can be overridden via CLI flags to match any team
 | `--num-workers` | `int` | `2` | Number of DataLoader worker processes (`0` for Windows debugging, `8`-`16` on cluster nodes). |
 | `--no-class-weights`| `flag` | `False` | Disables inverse-frequency weighting in CrossEntropyLoss. |
 | `--amp` / `--no-amp`| `flag` | `Auto` | Automatic Mixed Precision (enabled automatically when CUDA is present). |
-| `--no-multi-gpu` | `flag` | `False` | Disables `DataParallel` across multiple GPU devices/shards. |
+| `--no-multi-gpu` | `flag` | `False` | Disables `DataParallel` across multiple GPU shards. |
 | `--compile` | `flag` | `False` | Enables `torch.compile()` PyTorch 2.x Inductor kernel fusion. |
-| `--resume` | `str` | `None` | Path to a `.pt` checkpoint file to resume training from. |
+| `--resume` | `str` | `None` | Path to `.pt` checkpoint to resume from, or pass without argument (`--resume`) to auto-resume latest. |
+| `--auto-resume` | `flag` | `False` | Automatically resume from latest checkpoint if one exists. |
 | `--dataset-dir` | `str` | `None` | Custom path to the `defungi/` directory if stored outside root. |
 | `--checkpoint-dir`| `str` | `checkpoints` | Custom target folder for saved model weights. |
-| `--plots-dir` | `str` | `plots` | Custom target folder for evaluation charts and confusion matrices. |
+| `--plots-dir` | `str` | `plots` | Custom target folder for charts, confusion matrices, and history files. |
 
 #### High-Performance Multi-GPU / Multi-Shard Execution:
 On a powerful cluster node or multi-GPU server (e.g., 8 GPU shards):
@@ -157,11 +159,12 @@ flowchart LR
 
 ---
 
-## 6. Checkpoint Management & Multi-Session Training
+## 6. Checkpoint Management & Continuous Multi-Session Training
 
-You do not need to run all epochs in a single continuous session. The pipeline automatically maintains two checkpoints:
+The training pipeline is fully crash-resilient and continuous across sessions:
 1. **`checkpoints/resnet18_<decoder>_best.pt`**: Updated whenever validation Macro-F1 improves.
-2. **`checkpoints/resnet18_<decoder>_latest.pt`**: Updated at the end of **every** epoch.
+2. **`checkpoints/resnet18_<decoder>_latest.pt`**: Updated at the end of **every single epoch**. Contains full model weights, optimizer buffers, LR scheduler state, and cumulative metric history.
+3. **Per-Epoch Crash Resilience**: At the end of every epoch, `latest.pt`, `plots/resnet18_<decoder>_training_curves.png`, `history.json`, and `history.csv` are flushed to disk. If a run ends prematurely (`Ctrl+C` or system shutdown), all progress up to the last completed epoch is preserved.
 
 ### How to Stop & Resume Training Later
 
@@ -170,36 +173,68 @@ You do not need to run all epochs in a single continuous session. The pipeline a
 python src/transfer/train.py --epochs 5 --decoder-type linear
 ```
 
-#### Step 2: Resume in a Later Session (e.g., 5 More Epochs)
-Pass the `--resume` flag pointing to the checkpoint:
+#### Step 2: Resume Seamlessly (Continuing as One Single Run)
+You can resume either with the checkpoint path or simply pass `--resume` to auto-resume:
 ```bash
-python src/transfer/train.py --epochs 5 --decoder-type linear --resume checkpoints/resnet18_linear_latest.pt
+# Auto-resume latest checkpoint and train 5 more epochs:
+python src/transfer/train.py --epochs 5 --decoder-type linear --resume
+
+# Or specify a target total epoch number (e.g., train until Epoch 20 total):
+python src/transfer/train.py --total-epochs 20 --decoder-type linear --resume
 ```
 
-The script will automatically:
-- Load model weights and classification head parameters.
-- Restore the Adam optimizer state and momentum buffers.
-- Resume epoch counter sequentially (e.g., Epoch 6 to 10).
-- Preserve the previous highest Macro-F1 for saving new best models.
+The script automatically:
+- Restores model weights, Adam optimizer momentum, and LR scheduler decay state.
+- Loads previous metric history so training curves **extend continuously** rather than resetting or deleting previous data.
+- Appends new epochs to `history.json` and `history.csv` for downstream analysis.
+- Preserves the previous highest Macro-F1 for saving new best checkpoints.
 
 ---
 
 ## 7. Output Artifacts & Results Inspection
 
-Upon completion, `train.py` automatically generates:
+During and upon completion of training, the pipeline continuously maintains:
 
 1. **Terminal Benchmark Summary**:
    - Classification report (precision, recall, F1 per class).
    - Side-by-side comparison table against the Majority Class Baseline.
-2. **Loss & Accuracy Curves (`plots/resnet18_<decoder>_training_curves.png`)**:
-   - Subplot 1: Train Loss vs. Validation Loss across epochs.
-   - Subplot 2: Train Accuracy vs. Validation Accuracy with the 48.33% majority baseline line.
+2. **Training Curves (`plots/resnet18_<decoder>_training_curves.png`)**:
+   - Subplot 1: Cross-Entropy Loss vs. Epoch across all sessions.
+   - Subplot 2: Train & Val Accuracy vs. Epoch with the 48.33% baseline line.
+   - Subplot 3: Validation Macro F1 vs. Epoch with the 13.03% baseline line.
+   - Continuously updated after every epoch; never deleted or truncated upon resumption.
 3. **Confusion Matrix Plot (`plots/resnet18_<decoder>_confusion_matrix.png`)**:
-   - Visual heatmap displaying true labels vs. predicted labels for all 1,823 test images.
+   - Heatmap of true labels vs. predicted labels for test images, updated whenever a new best model is found and at final evaluation.
+4. **Structured History Data (`plots/resnet18_<decoder>_history.json` & `.csv`)**:
+   - Complete tabular log containing `epoch`, `train_loss`, `train_acc`, `val_loss`, `val_acc`, `val_macro_f1`, and `lr`.
+   - CSV can be opened directly in Excel, Google Sheets, or pandas for report generation.
 
 ---
 
-## 8. IDE & Language Server Configuration (Optional)
+## 8. Running the Automated Test Suite
+
+The test suite validates continuous history logging, crash resilience, multi-session resumption, and CLI workflows.
+
+### Fast Tests (Unit & Multi-Session Simulation — ~15 seconds)
+Recommended for day-to-day verification:
+```powershell
+pytest -v tests/test_checkpoint_history.py tests/test_multisession_training.py
+```
+
+### Full Test Suite (Including Subprocess Real-Data CLI Training)
+```powershell
+pytest -v tests/
+```
+*(Note: `test_cli_workflow.py` trains 2 full epochs on the DeFungi dataset through a subprocess to test actual disk persistence; on CPU this takes ~10 minutes).*
+
+### Running Pyrefly Type Checks
+```powershell
+& "c:\Users\novojiac\.antigravity-ide\extensions\meta.pyrefly-1.4.0-win32-x64\bin\pyrefly.exe" check
+```
+
+---
+
+## 9. IDE & Language Server Configuration (Optional)
 
 If teammates see import warnings (`torchvision`, `torch`) in their editor:
 

@@ -17,3 +17,6 @@ tqdm
 ipykernel
 huggingface_hub
 
+# Testing
+pytest
+
