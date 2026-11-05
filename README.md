@@ -44,11 +44,13 @@ python -m venv .venv
 
 ### 2. Dependencies
 
-Install required machine learning and imaging packages:
+Install all required packages from `requirements.txt`:
 
 ```bash
-pip install torch torchvision numpy matplotlib pandas scikit-learn
+pip install -r requirements.txt
 ```
+
+*(Or manually: `pip install torch torchvision numpy matplotlib pandas scikit-learn gradio`)*
 
 ---
 

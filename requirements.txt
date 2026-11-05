@@ -20,3 +20,6 @@ huggingface_hub
 # Testing
 pytest
 
+# Web App Demo & Deployment
+gradio
+
