@@ -1,5 +1,6 @@
 """
-Training, evaluation, and benchmark verification script for ResNet-18 on DeFungi.
+Training, fine-tuning, evaluation, and benchmark verification script for ResNet-18 on DeFungi.
+Supports both Stage 1 (decoder feature extraction) and Stage 2 (dynamic backbone fine-tuning).
 """
 
 import argparse
@@ -33,10 +34,10 @@ from tqdm import tqdm  # type: ignore[import-untyped]
 # Fallback between relative and absolute imports
 try:
     from .dataset import get_dataloaders
-    from .model import build_resnet18, get_parameter_counts
+    from .model import build_resnet18, get_parameter_counts, unfreeze_backbone, inspect_trainable_layers
 except (ImportError, ValueError):
     from dataset import get_dataloaders
-    from model import build_resnet18, get_parameter_counts
+    from model import build_resnet18, get_parameter_counts, unfreeze_backbone, inspect_trainable_layers
 
 
 def get_base_module(model: nn.Module) -> nn.Module:
@@ -48,6 +49,116 @@ def get_base_module(model: nn.Module) -> nn.Module:
     return model
 
 
+def detect_decoder_type_from_checkpoint(checkpoint_state: Dict[str, Any], file_path: Path) -> str:
+    """
+    Infers the decoder architecture ('linear', 'mlp', 'mlp_deep', 'mlp_deeper')
+    from checkpoint metadata, state dict layer structures, or filename.
+    """
+    if isinstance(checkpoint_state, dict):
+        if "decoder_type" in checkpoint_state and checkpoint_state["decoder_type"]:
+            return str(checkpoint_state["decoder_type"])
+
+        # Inspect model_state_dict layer shapes
+        if "model_state_dict" in checkpoint_state and isinstance(checkpoint_state["model_state_dict"], dict):
+            sd = checkpoint_state["model_state_dict"]
+            fc_weight_keys = [k for k in sd.keys() if (k.startswith("fc.") or ".fc." in k) and "weight" in k]
+            if len(fc_weight_keys) == 4:
+                return "mlp_deeper"
+            elif len(fc_weight_keys) == 3:
+                return "mlp_deep"
+            elif len(fc_weight_keys) == 2:
+                return "mlp"
+            elif len(fc_weight_keys) == 1:
+                return "linear"
+
+    # Infer from filename
+    name = file_path.stem.lower()
+    for candidate in ["mlp_deeper", "mlp_deep", "mlp", "linear"]:
+        if candidate in name:
+            return candidate
+
+    return "linear"
+
+
+def find_best_checkpoint(
+    checkpoint_dir: Path,
+    preferred_decoder: Optional[str] = None
+) -> Tuple[Path, str, float]:
+    """
+    Scans checkpoint_dir for candidate models, displays a summary table,
+    and returns (best_checkpoint_path, detected_decoder_type, best_macro_f1).
+    """
+    if not checkpoint_dir.exists():
+        raise FileNotFoundError(f"Checkpoint directory '{checkpoint_dir}' does not exist.")
+
+    # Search for best checkpoints first; fallback to all .pt
+    candidates = [p for p in checkpoint_dir.glob("resnet18_*_best.pt") if "_finetuned" not in p.name]
+    if not candidates:
+        candidates = list(checkpoint_dir.glob("resnet18_*_best.pt"))
+    if not candidates:
+        candidates = list(checkpoint_dir.glob("*.pt"))
+
+    if not candidates:
+        raise FileNotFoundError(f"No checkpoint files (.pt) found in '{checkpoint_dir}'.")
+
+    records = []
+    for p in sorted(candidates):
+        try:
+            data = torch.load(p, map_location="cpu")
+            macro_f1 = -1.0
+            val_acc = -1.0
+            dec = None
+            if isinstance(data, dict):
+                macro_f1 = float(data.get("best_macro_f1", -1.0))
+                val_acc = float(data.get("val_acc", -1.0))
+                dec = detect_decoder_type_from_checkpoint(data, p)
+                if macro_f1 <= 0 and "history" in data and isinstance(data["history"], dict):
+                    f1_hist = data["history"].get("val_macro_f1", [])
+                    if f1_hist:
+                        macro_f1 = float(max(f1_hist))
+            if dec is None:
+                dec = detect_decoder_type_from_checkpoint({}, p)
+            records.append({
+                "path": p,
+                "decoder_type": dec,
+                "macro_f1": macro_f1,
+                "val_acc": val_acc,
+            })
+        except Exception as e:
+            print(f"[Warning] Could not inspect checkpoint {p.name}: {e}")
+
+    if not records:
+        raise RuntimeError(f"No valid checkpoints could be loaded from '{checkpoint_dir}'.")
+
+    print("\n" + "=" * 70)
+    print(f"{'DISCOVERED CHECKPOINTS IN':<30} {str(checkpoint_dir)}")
+    print("=" * 70)
+    print(f"{'Checkpoint Filename':<32} | {'Decoder':<12} | {'Macro F1':<10} | {'Val Acc':<9}")
+    print("-" * 70)
+    for r in records:
+        f1_str = f"{r['macro_f1']*100:.2f}%" if r["macro_f1"] >= 0 else "N/A"
+        acc_str = f"{r['val_acc']*100:.2f}%" if r["val_acc"] >= 0 else "N/A"
+        print(f"{r['path'].name:<32} | {r['decoder_type']:<12} | {f1_str:<10} | {acc_str:<9}")
+    print("=" * 70)
+
+    # Match preferred decoder if specified
+    if preferred_decoder:
+        matching = [r for r in records if r["decoder_type"] == preferred_decoder]
+        if matching:
+            matching.sort(key=lambda x: (x["macro_f1"], x["val_acc"]), reverse=True)
+            chosen = matching[0]
+            print(f"[Dynamic Selection] Selected preferred '{preferred_decoder}' checkpoint: {chosen['path'].name}")
+            return chosen["path"], chosen["decoder_type"], chosen["macro_f1"]
+        else:
+            print(f"[Dynamic Selection] No exact match for preferred decoder '{preferred_decoder}'. Picking overall champion.")
+
+    records.sort(key=lambda x: (x["macro_f1"], x["val_acc"]), reverse=True)
+    champion = records[0]
+    print(f"[Dynamic Selection] Automatically selected champion checkpoint: {champion['path'].name}")
+    print(f"                     Architecture: {champion['decoder_type'].upper()} | Val Macro-F1: {champion['macro_f1']*100:.2f}%\n")
+    return champion["path"], champion["decoder_type"], champion["macro_f1"]
+
+
 def train_one_epoch(
     model: nn.Module,
     dataloader: torch.utils.data.DataLoader,
@@ -55,7 +166,8 @@ def train_one_epoch(
     optimizer: torch.optim.Optimizer,
     device: torch.device,
     scaler: Optional[GradScaler] = None,
-    use_amp: bool = False
+    use_amp: bool = False,
+    max_batches: Optional[int] = None
 ) -> Tuple[float, float]:
     """Runs a single training epoch with optional mixed precision."""
     model.train()
@@ -64,7 +176,10 @@ def train_one_epoch(
     total = 0
 
     pbar = tqdm(dataloader, desc="Training", leave=False)
-    for images, labels in pbar:
+    for batch_idx, (images, labels) in enumerate(pbar):
+        if max_batches is not None and batch_idx >= max_batches:
+            break
+
         images = images.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
 
@@ -88,8 +203,8 @@ def train_one_epoch(
 
         pbar.set_postfix({"loss": f"{loss.item():.4f}", "acc": f"{correct / total:.4f}"})
 
-    epoch_loss = running_loss / total
-    epoch_acc = correct / total
+    epoch_loss = running_loss / max(total, 1)
+    epoch_acc = correct / max(total, 1)
     return epoch_loss, epoch_acc
 
 
@@ -98,7 +213,8 @@ def evaluate(
     dataloader: torch.utils.data.DataLoader,
     criterion: nn.Module,
     device: torch.device,
-    use_amp: bool = False
+    use_amp: bool = False,
+    max_batches: Optional[int] = None
 ) -> Tuple[float, float, float, np.ndarray, np.ndarray]:
     """Evaluates the model on test/validation set and computes metrics."""
     model.eval()
@@ -107,7 +223,10 @@ def evaluate(
     all_labels = []
 
     with torch.no_grad():
-        for images, labels in dataloader:
+        for batch_idx, (images, labels) in enumerate(dataloader):
+            if max_batches is not None and batch_idx >= max_batches:
+                break
+
             images = images.to(device, non_blocking=True)
             labels = labels.to(device, non_blocking=True)
 
@@ -122,12 +241,16 @@ def evaluate(
             all_labels.extend(labels.cpu().numpy())
 
     total = len(all_labels)
-    eval_loss = running_loss / total
+    eval_loss = running_loss / max(total, 1)
     y_true = np.array(all_labels)
     y_pred = np.array(all_preds)
 
-    acc = accuracy_score(y_true, y_pred)
-    macro_f1 = f1_score(y_true, y_pred, average="macro", zero_division=0)
+    if total > 0:
+        acc = accuracy_score(y_true, y_pred)
+        macro_f1 = f1_score(y_true, y_pred, average="macro", zero_division=0)
+    else:
+        acc = 0.0
+        macro_f1 = 0.0
 
     return float(eval_loss), float(acc), float(macro_f1), y_true, y_pred
 
@@ -276,6 +399,9 @@ def save_confusion_matrix_plot(
 ) -> None:
     """Saves normalized and raw confusion matrix visualization."""
     save_path.parent.mkdir(parents=True, exist_ok=True)
+    if len(y_true) == 0 or len(y_pred) == 0:
+        return
+
     cm = confusion_matrix(y_true, y_pred)
     disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=classes)
 
@@ -291,16 +417,16 @@ def save_confusion_matrix_plot(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train ResNet-18 on DeFungi Dataset.")
+    parser = argparse.ArgumentParser(description="Train or fine-tune ResNet-18 on DeFungi Dataset.")
     parser.add_argument("--epochs", type=int, default=10, help="Number of additional training epochs (default: 10)")
     parser.add_argument("--total-epochs", type=int, default=None,
                         help="Target total epochs count (overrides --epochs to reach this specific epoch)")
     parser.add_argument("--batch-size", type=int, default=32, help="Input batch size")
-    parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate for decoder head")
+    parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate for initial feature extraction training")
     parser.add_argument("--weight-decay", type=float, default=1e-4, help="L2 regularization")
     parser.add_argument("--dropout", type=float, default=0.3, help="Dropout rate before linear head")
-    parser.add_argument("--decoder-type", type=str, default="linear", choices=["linear", "mlp", "mlp_deep","mlp_deeper"],
-                        help="Decoder head architecture: 'linear' (1-layer), 'mlp' (2-layer), 'mlp_deep' (3-layer),'mlp_deeper' (4-layer)")
+    parser.add_argument("--decoder-type", type=str, default="linear", choices=["linear", "mlp", "mlp_deep", "mlp_deeper"],
+                        help="Decoder head architecture: 'linear', 'mlp', 'mlp_deep', or 'mlp_deeper'")
     parser.add_argument("--scheduler", type=str, default="cosine", choices=["none", "cosine", "plateau"],
                         help="Learning rate scheduler")
     parser.add_argument("--num-workers", type=int, default=2, help="DataLoader worker processes")
@@ -313,13 +439,48 @@ def main():
                         help="Disable DataParallel across multiple GPU shards")
     parser.add_argument("--compile", action="store_true",
                         help="Enable torch.compile() for PyTorch 2.x acceleration")
-    parser.add_argument("--checkpoint-dir", type=str, default="checkpoints", help="Directory to save models")
+    parser.add_argument("--checkpoint-dir", type=str, default="checkpoints", help="Directory to save/load models")
     parser.add_argument("--plots-dir", type=str, default="plots", help="Directory to save figures and history")
     parser.add_argument("--dataset-dir", type=str, default=None, help="Explicit path to defungi directory")
     parser.add_argument("--resume", type=str, nargs="?", const="auto", default=None,
                         help="Path to checkpoint to resume from, or pass without argument to auto-resume latest")
     parser.add_argument("--auto-resume", action="store_true",
                         help="Automatically resume from latest checkpoint if one exists")
+
+    # Fine-tuning parameters
+    parser.add_argument(
+        "--fine-tune",
+        nargs="?",
+        const="auto",
+        default=None,
+        help="Enable fine-tuning mode. Pass without argument or 'auto' to dynamically find and load the best feature-extracted checkpoint, or pass a specific checkpoint path (e.g. checkpoints/resnet18_mlp_best.pt)."
+    )
+    parser.add_argument(
+        "--fine-tune-layers",
+        type=str,
+        default="layer4",
+        choices=["layer4", "layer3_4", "all"],
+        help="Backbone layers to unfreeze during fine-tuning: 'layer4' (layer4 + decoder head), 'layer3_4' (layer3 + layer4 + decoder), or 'all' (entire backbone)."
+    )
+    parser.add_argument(
+        "--fine-tune-lr",
+        type=float,
+        default=1e-4,
+        help="Learning rate for classification decoder head during fine-tuning (default: 1e-4)"
+    )
+    parser.add_argument(
+        "--fine-tune-backbone-lr",
+        type=float,
+        default=1e-5,
+        help="Learning rate for unfrozen backbone convolutional layers during fine-tuning (default: 1e-5)"
+    )
+    parser.add_argument(
+        "--max-batches",
+        type=int,
+        default=None,
+        help="Maximum number of batches per epoch (useful for dry runs and fast testing)"
+    )
+
     args = parser.parse_args()
 
     # Hardware setup
@@ -340,12 +501,42 @@ def main():
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     plots_dir.mkdir(parents=True, exist_ok=True)
 
-    best_model_path = ckpt_dir / f"resnet18_{args.decoder_type}_best.pt"
-    latest_model_path = ckpt_dir / f"resnet18_{args.decoder_type}_latest.pt"
-    curves_path = plots_dir / f"resnet18_{args.decoder_type}_training_curves.png"
-    cm_path = plots_dir / f"resnet18_{args.decoder_type}_confusion_matrix.png"
-    history_json_path = plots_dir / f"resnet18_{args.decoder_type}_history.json"
-    history_csv_path = plots_dir / f"resnet18_{args.decoder_type}_history.csv"
+    is_finetune = args.fine_tune is not None
+    base_checkpoint_to_load: Optional[Path] = None
+
+    if is_finetune:
+        # Check if user specified a path or "auto"
+        ft_val = args.fine_tune.strip()
+        user_specified_decoder = any(arg.startswith("--decoder-type") for arg in sys.argv)
+        preferred_decoder = args.decoder_type if user_specified_decoder else None
+
+        if ft_val.lower() == "auto":
+            base_checkpoint_to_load, detected_decoder, _ = find_best_checkpoint(
+                ckpt_dir,
+                preferred_decoder=preferred_decoder
+            )
+            args.decoder_type = detected_decoder
+        else:
+            cand_path = Path(ft_val)
+            if not cand_path.is_file():
+                # Try relative to ckpt_dir
+                cand_path = ckpt_dir / ft_val
+            if not cand_path.is_file():
+                raise FileNotFoundError(f"Specified fine-tuning checkpoint not found: '{ft_val}'")
+            base_checkpoint_to_load = cand_path
+            # Detect architecture from checkpoint
+            temp_data = torch.load(base_checkpoint_to_load, map_location="cpu")
+            args.decoder_type = detect_decoder_type_from_checkpoint(temp_data, base_checkpoint_to_load)
+            print(f"[Fine-Tuning] Loaded explicit checkpoint: {base_checkpoint_to_load.name} (Detected architecture: {args.decoder_type.upper()})")
+
+    file_tag = f"resnet18_{args.decoder_type}_finetuned" if is_finetune else f"resnet18_{args.decoder_type}"
+
+    best_model_path = ckpt_dir / f"{file_tag}_best.pt"
+    latest_model_path = ckpt_dir / f"{file_tag}_latest.pt"
+    curves_path = plots_dir / f"{file_tag}_training_curves.png"
+    cm_path = plots_dir / f"{file_tag}_confusion_matrix.png"
+    history_json_path = plots_dir / f"{file_tag}_history.json"
+    history_csv_path = plots_dir / f"{file_tag}_history.csv"
 
     # Data preparation
     print("\n[1/4] Preparing DataLoaders...")
@@ -359,7 +550,9 @@ def main():
     print(f"Test samples:  {len(cast(Sized, test_loader.dataset)):,}")
 
     # Model initialization
-    print(f"\n[2/4] Initializing Pre-trained ResNet-18 with '{args.decoder_type}' Decoder...")
+    mode_desc = f"Fine-Tuning ({args.fine_tune_layers})" if is_finetune else "Feature Extraction (Frozen Backbone)"
+    print(f"\n[2/4] Initializing ResNet-18 with '{args.decoder_type}' Decoder [{mode_desc}]...")
+
     model: nn.Module = build_resnet18(
         num_classes=len(classes),
         freeze_backbone=True,
@@ -367,26 +560,66 @@ def main():
         decoder_type=args.decoder_type
     ).to(device)
 
+    # If fine-tuning, load the weights from base checkpoint and unfreeze target layers
+    if is_finetune and base_checkpoint_to_load is not None:
+        print(f"Loading base pretrained weights from: {base_checkpoint_to_load.name}")
+        base_data = torch.load(base_checkpoint_to_load, map_location=device)
+        raw_m = get_base_module(model)
+        state_d = base_data["model_state_dict"] if (isinstance(base_data, dict) and "model_state_dict" in base_data) else base_data
+        raw_m.load_state_dict(state_d)
+
+        unfreeze_backbone(raw_m, layers=args.fine_tune_layers)
+        print(f"Unfrozen target layers: '{args.fine_tune_layers}'")
+
     trainable_p, frozen_p, total_p = get_parameter_counts(model)
     print(f"Decoder Type:                        {args.decoder_type}")
-    print(f"Trainable Parameters (Decoder Head): {trainable_p:,}")
-    print(f"Frozen Parameters (Backbone):        {frozen_p:,}")
+    print(f"Trainable Parameters:                {trainable_p:,} ({trainable_p / total_p * 100:.2f}%)")
+    print(f"Frozen Parameters:                   {frozen_p:,} ({frozen_p / total_p * 100:.2f}%)")
+
+    # Layer trainability breakdown
+    raw_m = get_base_module(model)
+    layer_summary = inspect_trainable_layers(raw_m)
+    print("\nLayer Trainability Summary:")
+    for group_name, counts in layer_summary.items():
+        print(f"  {group_name:<20} | Trainable: {counts['trainable']:>10,} | Frozen: {counts['frozen']:>10,}")
 
     # Loss function & Optimizer
     if args.no_class_weights:
         criterion = nn.CrossEntropyLoss()
-        print("Using standard CrossEntropyLoss (unweighted)")
+        print("\nUsing standard CrossEntropyLoss (unweighted)")
     else:
         criterion = nn.CrossEntropyLoss(weight=class_weights.to(device))
-        print("Using weighted CrossEntropyLoss (inverse-frequency weights):")
+        print("\nUsing weighted CrossEntropyLoss (inverse-frequency weights):")
         for cls_name, w in zip(classes, class_weights.tolist()):
             print(f"  {cls_name}: {w:.3f}")
 
-    optimizer = torch.optim.Adam(
-        [p for p in model.parameters() if p.requires_grad],
-        lr=args.lr,
-        weight_decay=args.weight_decay
-    )
+    if is_finetune:
+        # Differential learning rates: backbone gets fine-tune-backbone-lr, head gets fine-tune-lr
+        backbone_params = []
+        head_params = []
+        for name, param in raw_m.named_parameters():
+            if not param.requires_grad:
+                continue
+            if name.startswith("fc"):
+                head_params.append(param)
+            else:
+                backbone_params.append(param)
+
+        param_groups = []
+        if backbone_params:
+            param_groups.append({"params": backbone_params, "lr": args.fine_tune_backbone_lr})
+            print(f"Backbone Optimizer LR:   {args.fine_tune_backbone_lr} ({len(backbone_params)} param tensors)")
+        if head_params:
+            param_groups.append({"params": head_params, "lr": args.fine_tune_lr})
+            print(f"Decoder Head Optimizer LR: {args.fine_tune_lr} ({len(head_params)} param tensors)")
+
+        optimizer = torch.optim.Adam(param_groups, weight_decay=args.weight_decay)
+    else:
+        optimizer = torch.optim.Adam(
+            [p for p in model.parameters() if p.requires_grad],
+            lr=args.lr,
+            weight_decay=args.weight_decay
+        )
 
     # Multi-GPU / Multi-shard parallelization
     if num_gpus > 1 and not args.no_multi_gpu:
@@ -405,7 +638,7 @@ def main():
     if use_amp:
         print("[Optimization] Automatic Mixed Precision (AMP) enabled for Tensor Cores.")
 
-    # Determine checkpoint resume path
+    # Determine checkpoint resume path (if user is resuming an ongoing session)
     resume_path: Optional[Path] = None
     if args.resume:
         if args.resume == "auto":
@@ -528,14 +761,16 @@ def main():
                     optimizer=optimizer,
                     device=device,
                     scaler=scaler,
-                    use_amp=use_amp
+                    use_amp=use_amp,
+                    max_batches=args.max_batches
                 )
                 val_loss, val_acc, val_macro_f1, y_true_val, y_pred_val = evaluate(
                     model=model,
                     dataloader=test_loader,
                     criterion=criterion,
                     device=device,
-                    use_amp=use_amp
+                    use_amp=use_amp,
+                    max_batches=args.max_batches
                 )
 
                 curr_lr = float(optimizer.param_groups[0]["lr"])
@@ -564,7 +799,10 @@ def main():
                     "best_macro_f1": best_macro_f1,
                     "val_acc": val_acc,
                     "classes": classes,
-                    "history": history
+                    "history": history,
+                    "decoder_type": args.decoder_type,
+                    "is_finetuned": is_finetune,
+                    "fine_tune_layers": args.fine_tune_layers if is_finetune else None
                 }
 
                 # Save latest checkpoint after every epoch
@@ -604,7 +842,7 @@ def main():
     # Final evaluation using best model (or latest if best not present)
     eval_model_path = best_model_path if best_model_path.exists() else latest_model_path
     if eval_model_path.exists() and not interrupted:
-        print(f"\n[4/4] Final Evaluation on 1,823 Test Images using '{eval_model_path.name}'...")
+        print(f"\n[4/4] Final Evaluation on Test Images using '{eval_model_path.name}'...")
         checkpoint = torch.load(eval_model_path, map_location=device)
         raw_model = get_base_module(model)
         raw_model.load_state_dict(checkpoint["model_state_dict"])
@@ -613,45 +851,48 @@ def main():
             dataloader=test_loader,
             criterion=criterion,
             device=device,
-            use_amp=use_amp
+            use_amp=use_amp,
+            max_batches=args.max_batches
         )
 
-        bal_acc = balanced_accuracy_score(y_true, y_pred)
-        macro_prec = precision_score(y_true, y_pred, average="macro", zero_division=0)
-        macro_rec = recall_score(y_true, y_pred, average="macro", zero_division=0)
-        weighted_f1 = f1_score(y_true, y_pred, average="weighted", zero_division=0)
+        if len(y_true) > 0 and len(y_pred) > 0:
+            bal_acc = balanced_accuracy_score(y_true, y_pred)
+            macro_prec = precision_score(y_true, y_pred, average="macro", zero_division=0)
+            macro_rec = recall_score(y_true, y_pred, average="macro", zero_division=0)
+            weighted_f1 = f1_score(y_true, y_pred, average="weighted", zero_division=0)
 
-        print("\n" + "=" * 60)
-        print(f"RESNET-18 [{args.decoder_type.upper()}] FINAL BENCHMARK RESULTS")
-        print("=" * 60)
-        print(f"Overall Test Accuracy: {test_acc:.4f} ({test_acc * 100:.2f}%)")
-        print(f"Balanced Accuracy:     {bal_acc:.4f} ({bal_acc * 100:.2f}%)")
-        print(f"Macro Precision:       {macro_prec:.4f} ({macro_prec * 100:.2f}%)")
-        print(f"Macro Recall:          {macro_rec:.4f} ({macro_rec * 100:.2f}%)")
-        print(f"Macro F1-Score:        {test_macro_f1:.4f} ({test_macro_f1 * 100:.2f}%)")
-        print(f"Weighted F1-Score:     {weighted_f1:.4f} ({weighted_f1 * 100:.2f}%)")
+            mode_label = f"ResNet-18 [{args.decoder_type.upper()}{' FT' if is_finetune else ''}]"
+            print("\n" + "=" * 60)
+            print(f"{mode_label} FINAL BENCHMARK RESULTS")
+            print("=" * 60)
+            print(f"Overall Test Accuracy: {test_acc:.4f} ({test_acc * 100:.2f}%)")
+            print(f"Balanced Accuracy:     {bal_acc:.4f} ({bal_acc * 100:.2f}%)")
+            print(f"Macro Precision:       {macro_prec:.4f} ({macro_prec * 100:.2f}%)")
+            print(f"Macro Recall:          {macro_rec:.4f} ({macro_rec * 100:.2f}%)")
+            print(f"Macro F1-Score:        {test_macro_f1:.4f} ({test_macro_f1 * 100:.2f}%)")
+            print(f"Weighted F1-Score:     {weighted_f1:.4f} ({weighted_f1 * 100:.2f}%)")
 
-        print("\nClassification Report:")
-        print(classification_report(y_true, y_pred, target_names=classes, zero_division=0))
+            print("\nClassification Report:")
+            print(classification_report(y_true, y_pred, target_names=classes, zero_division=0))
 
-        # Benchmark vs Baseline
-        print("=" * 60)
-        print("COMPARISON: MAJORITY CLASS BASELINE vs. RESNET-18 TRANSFER LEARNING")
-        print("=" * 60)
-        print(f"{'Metric':<22} | {'Baseline (Zero-R)':<18} | {f'ResNet-18 ({args.decoder_type})':<18} | {'Change':<10}")
-        print("-" * 75)
-        print(f"{'Accuracy':<22} | {'48.33%':<18} | {f'{test_acc*100:.2f}%':<18} | {f'+{(test_acc*100 - 48.33):.2f}%':<10}")
-        print(f"{'Balanced Accuracy':<22} | {'20.00%':<18} | {f'{bal_acc*100:.2f}%':<18} | {f'+{(bal_acc*100 - 20.00):.2f}%':<10}")
-        print(f"{'Macro Precision':<22} | {'9.67%':<18} | {f'{macro_prec*100:.2f}%':<18} | {f'+{(macro_prec*100 - 9.67):.2f}%':<10}")
-        print(f"{'Macro Recall':<22} | {'20.00%':<18} | {f'{macro_rec*100:.2f}%':<18} | {f'+{(macro_rec*100 - 20.00):.2f}%':<10}")
-        print(f"{'Macro F1':<22} | {'13.03%':<18} | {f'{test_macro_f1*100:.2f}%':<18} | {f'+{(test_macro_f1*100 - 13.03):.2f}%':<10}")
-        print("=" * 60)
+            # Benchmark vs Baseline
+            print("=" * 60)
+            print("COMPARISON: MAJORITY CLASS BASELINE vs. RESNET-18 TRANSFER LEARNING")
+            print("=" * 60)
+            print(f"{'Metric':<22} | {'Baseline (Zero-R)':<18} | {f'{mode_label}':<24} | {'Change':<10}")
+            print("-" * 81)
+            print(f"{'Accuracy':<22} | {'48.33%':<18} | {f'{test_acc*100:.2f}%':<24} | {f'+{(test_acc*100 - 48.33):.2f}%':<10}")
+            print(f"{'Balanced Accuracy':<22} | {'20.00%':<18} | {f'{bal_acc*100:.2f}%':<24} | {f'+{(bal_acc*100 - 20.00):.2f}%':<10}")
+            print(f"{'Macro Precision':<22} | {'9.67%':<18} | {f'{macro_prec*100:.2f}%':<24} | {f'+{(macro_prec*100 - 9.67):.2f}%':<10}")
+            print(f"{'Macro Recall':<22} | {'20.00%':<18} | {f'{macro_rec*100:.2f}%':<24} | {f'+{(macro_rec*100 - 20.00):.2f}%':<10}")
+            print(f"{'Macro F1':<22} | {'13.03%':<18} | {f'{test_macro_f1*100:.2f}%':<24} | {f'+{(test_macro_f1*100 - 13.03):.2f}%':<10}")
+            print("=" * 60)
 
-        # Re-save visual assets at end
-        save_training_plots(history, curves_path, verbose=True)
-        save_confusion_matrix_plot(y_true, y_pred, classes, cm_path, verbose=True)
+            # Re-save visual assets at end
+            save_training_plots(history, curves_path, verbose=True)
+            save_confusion_matrix_plot(y_true, y_pred, classes, cm_path, verbose=True)
 
-        if args.decoder_type == "linear":
+        if not is_finetune and args.decoder_type == "linear":
             torch.save(checkpoint, ckpt_dir / "resnet18_defungi_best.pt")
         print(f"\nArtifacts generated successfully in {plots_dir}/ and {ckpt_dir}/")
 

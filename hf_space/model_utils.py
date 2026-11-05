@@ -1,13 +1,14 @@
 """
 Model inference utilities for the DeFungi classification demo.
 Loads ResNet-18 checkpoints trained on the DeFungi microscopic dataset.
+Supports Linear, MLP, MLP-Deep, MLP-Deeper, and Fine-Tuned checkpoints.
 """
 
 from pathlib import Path
 from typing import Dict, Tuple, Optional
 import torch
 import torch.nn as nn
-from torchvision.models import resnet18, ResNet18_Weights
+from torchvision.models import resnet18
 from torchvision import transforms
 from PIL import Image
 
@@ -38,7 +39,7 @@ inference_transform = transforms.Compose([
 
 
 def build_model(decoder_type: str = "mlp", num_classes: int = 5, dropout: float = 0.3) -> nn.Module:
-    """Instantiate a ResNet-18 architecture with either linear or MLP classification head."""
+    """Instantiate a ResNet-18 architecture with specified classification head."""
     model = resnet18(weights=None)
     in_features = model.fc.in_features
 
@@ -50,6 +51,29 @@ def build_model(decoder_type: str = "mlp", num_classes: int = 5, dropout: float 
     elif decoder_type == "mlp":
         model.fc = nn.Sequential(
             nn.Linear(in_features, 256),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=dropout),
+            nn.Linear(256, num_classes)
+        )
+    elif decoder_type == "mlp_deep":
+        model.fc = nn.Sequential(
+            nn.Linear(in_features, 256),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=dropout),
+            nn.Linear(256, 256),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=dropout),
+            nn.Linear(256, num_classes)
+        )
+    elif decoder_type == "mlp_deeper":
+        model.fc = nn.Sequential(
+            nn.Linear(in_features, 256),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=dropout),
+            nn.Linear(256, 256),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=dropout),
+            nn.Linear(256, 256),
             nn.ReLU(inplace=True),
             nn.Dropout(p=dropout),
             nn.Linear(256, num_classes)
@@ -67,37 +91,56 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 def get_model(model_choice: str) -> nn.Module:
     """
     Loads and caches the requested model checkpoint.
-    model_choice: 'mlp' or 'linear'
     """
-    decoder_type = "mlp" if "mlp" in model_choice.lower() else "linear"
-    filename = f"resnet18_{decoder_type}_best.pt"
-    ckpt_path = CHECKPOINT_DIR / filename
+    choice_lower = model_choice.lower()
+    is_ft = "fine-tune" in choice_lower or "finetuned" in choice_lower
 
+    if "deeper" in choice_lower:
+        decoder_type = "mlp_deeper"
+    elif "deep" in choice_lower:
+        decoder_type = "mlp_deep"
+    elif "mlp" in choice_lower:
+        decoder_type = "mlp"
+    else:
+        decoder_type = "linear"
+
+    cache_key = f"{decoder_type}_ft" if is_ft else decoder_type
+
+    if cache_key in _CACHED_MODELS:
+        return _CACHED_MODELS[cache_key]
+
+    filename = f"resnet18_{decoder_type}_finetuned_best.pt" if is_ft else f"resnet18_{decoder_type}_best.pt"
+    ckpt_path = CHECKPOINT_DIR / filename
     if not ckpt_path.exists():
         # Fallback to local root checkpoints if run from repo root
         ckpt_path = _BASE_DIR.parent / "checkpoints" / filename
 
+    if not ckpt_path.exists() and is_ft:
+        # Fallback to base if finetuned not found
+        filename = f"resnet18_{decoder_type}_best.pt"
+        ckpt_path = CHECKPOINT_DIR / filename
+        if not ckpt_path.exists():
+            ckpt_path = _BASE_DIR.parent / "checkpoints" / filename
+
     if not ckpt_path.exists():
         raise FileNotFoundError(f"Checkpoint not found at {ckpt_path}")
 
-    if decoder_type not in _CACHED_MODELS:
-        net = build_model(decoder_type=decoder_type, num_classes=len(CLASS_NAMES))
-        state = torch.load(str(ckpt_path), map_location=DEVICE)
-        
-        # Check if saved as a dict containing 'model_state_dict' or direct state dict
-        if isinstance(state, dict) and "model_state_dict" in state:
-            state_dict = state["model_state_dict"]
-        elif isinstance(state, dict) and "state_dict" in state:
-            state_dict = state["state_dict"]
-        else:
-            state_dict = state
+    net = build_model(decoder_type=decoder_type, num_classes=len(CLASS_NAMES))
+    state = torch.load(str(ckpt_path), map_location=DEVICE)
 
-        net.load_state_dict(state_dict)
-        net.to(DEVICE)
-        net.eval()
-        _CACHED_MODELS[decoder_type] = net
+    if isinstance(state, dict) and "model_state_dict" in state:
+        state_dict = state["model_state_dict"]
+    elif isinstance(state, dict) and "state_dict" in state:
+        state_dict = state["state_dict"]
+    else:
+        state_dict = state
 
-    return _CACHED_MODELS[decoder_type]
+    net.load_state_dict(state_dict)
+    net.to(DEVICE)
+    net.eval()
+    _CACHED_MODELS[cache_key] = net
+
+    return _CACHED_MODELS[cache_key]
 
 
 def predict(image: Image.Image, model_choice: str = "ResNet-18 (MLP Decoder - Recommended)") -> Tuple[Dict[str, float], str]:
@@ -110,8 +153,7 @@ def predict(image: Image.Image, model_choice: str = "ResNet-18 (MLP Decoder - Re
     if image is None:
         return {}, "Please upload or select an image to classify."
 
-    decoder_type = "mlp" if "mlp" in model_choice.lower() else "linear"
-    model = get_model(decoder_type)
+    model = get_model(model_choice)
 
     if image.mode != "RGB":
         image = image.convert("RGB")
@@ -143,4 +185,3 @@ def predict(image: Image.Image, model_choice: str = "ResNet-18 (MLP Decoder - Re
 """
 
     return results, markdown_details
-
