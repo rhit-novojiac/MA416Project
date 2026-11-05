@@ -22,67 +22,63 @@ def build_resnet18(
     dropout: float = 0.3,
     decoder_type: str = "linear"
 ) -> nn.Module:
-    """
-    Constructs a ResNet-18 model with ImageNet pre-trained weights and a customizable decoder head.
 
-    Args:
-        num_classes: Number of target categories (5 for DeFungi).
-        freeze_backbone: If True, freezes all backbone convolutional layers.
-        dropout: Dropout probability in the decoder.
-        decoder_type: Architecture for the decoder head:
-                      - 'linear': Single projection layer (Dropout -> Linear)
-                      - 'mlp': 2-layer MLP with BatchNorm and ReLU
-                      - 'mlp_deep': 3-layer MLP with BatchNorm and GELU
-
-    Returns:
-        model: Configured PyTorch nn.Module.
-    """
     weights = ResNet18_Weights.DEFAULT
     model = resnet18(weights=weights)
 
     if freeze_backbone:
-        for param in model.parameters():
+        for param in model.fc.parameters():
             param.requires_grad = False
 
-    # Replace final classification head (decoder) based on selected depth/architecture
-    in_features = model.fc.in_features  # 512 for ResNet-18
+   # ResNet-18 has 512 fully connected input features
+    in_features = model.fc.in_features
 
     if decoder_type == "linear":
-        model.fc = cast(
-            nn.Linear,
-            nn.Sequential(
-                nn.Dropout(p=dropout),
-                nn.Linear(in_features, num_classes)
-            )
+        model.fc = nn.Sequential(
+            nn.Dropout(p=dropout),
+            nn.Linear(in_features, num_classes)
         )
+
     elif decoder_type == "mlp":
-        model.fc = cast(
-            nn.Linear,
-            nn.Sequential(
-                nn.Linear(in_features, 256),
-                nn.ReLU(inplace=True),
-                nn.Dropout(p=dropout),
-                nn.Linear(256, num_classes)
-            )
+        model.fc = nn.Sequential(
+            nn.Linear(in_features, 256),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=dropout),
+            nn.Linear(256, num_classes)
         )
+
     elif decoder_type == "mlp_deep":
-        model.fc = cast(
-            nn.Linear,
-            nn.Sequential(
-                nn.Linear(in_features, 256),
-                nn.ReLU(inplace=True),
-                nn.Dropout(p=dropout),
-                nn.Linear(256, 256),
-                nn.ReLU(inplace=True),
-                nn.Dropout(p=dropout),
-                nn.Linear(256, num_classes)
-            )
+        model.fc = nn.Sequential(
+            nn.Linear(in_features, 256),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=dropout),
+            nn.Linear(256, 256),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=dropout),
+            nn.Linear(256, num_classes)
         )
+        
+    elif decoder_type == "mlp_deeper":
+        model.fc = nn.Sequential(
+            nn.Linear(in_features, 256),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=dropout),
+            nn.Linear(256, 256),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=dropout),
+            nn.Linear(256, 256),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=dropout),
+            nn.Linear(256, num_classes)
+        )
+
     else:
-        raise ValueError(f"Unknown decoder_type '{decoder_type}'. Must be 'linear', 'mlp', or 'mlp_deep'.")
+        raise ValueError(
+            f"Unknown decoder_type '{decoder_type}'. "
+            "Must be 'linear', 'mlp', 'mlp_deep', or mlp_deeper."
+        )
 
     return model
-
 
 def get_parameter_counts(model: nn.Module) -> Tuple[int, int, int]:
     """
@@ -97,35 +93,41 @@ def get_parameter_counts(model: nn.Module) -> Tuple[int, int, int]:
     return trainable, frozen, total
 
 
-def unfreeze_backbone(model: nn.Module, unfreeze_from_layer4_only: bool = False) -> None:
-    """
-    Utility for Reasonable / Stretch goals: unfreezes layers for fine-tuning.
+def unfreeze_backbone(
+    model: nn.Module,
+    unfreeze_from_layer4_only: bool = False
+) -> None:
 
-    Args:
-        model: ResNet model.
-        unfreeze_from_layer4_only: If True, only unfreezes layer4 and fc.
-                                   If False, unfreezes the whole backbone.
-    """
     if unfreeze_from_layer4_only:
         for name, param in model.named_parameters():
-            if "layer4" in name or "fc" in name:
+            if name.startswith("layer4") or name.startswith("fc"):
                 param.requires_grad = True
             else:
                 param.requires_grad = False
+
     else:
         for param in model.parameters():
             param.requires_grad = True
 
 
 if __name__ == "__main__":
-    net = build_resnet18(num_classes=5, freeze_backbone=True, dropout=0.3)
+    net = build_resnet18(
+        num_classes=5,
+        freeze_backbone=True,
+        dropout=0.3
+    )
+
     trainable_p, frozen_p, total_p = get_parameter_counts(net)
-    print("ResNet-18 Model Initialized:")
-    print(f"  Trainable Parameters: {trainable_p:,} ({trainable_p / total_p * 100:.2f}%)")
-    print(f"  Frozen Parameters:    {frozen_p:,} ({frozen_p / total_p * 100:.2f}%)")
+
+    print("DenseNet-121 Model Initialized:")
+    print(f"  Trainable Parameters: {trainable_p:,} "
+          f"({trainable_p / total_p * 100:.2f}%)")
+    print(f"  Frozen Parameters:    {frozen_p:,} "
+          f"({frozen_p / total_p * 100:.2f}%)")
     print(f"  Total Parameters:     {total_p:,}")
 
-    # Forward pass test
     dummy_input = torch.randn(2, 3, 224, 224)
     output = net(dummy_input)
-    print(f"  Forward pass output shape: {output.shape} (Expected: [2, 5])")
+
+    print(f"  Forward pass output shape: {output.shape}")
+    print("  Expected: [2, 5]")

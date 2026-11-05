@@ -299,8 +299,8 @@ def main():
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate for decoder head")
     parser.add_argument("--weight-decay", type=float, default=1e-4, help="L2 regularization")
     parser.add_argument("--dropout", type=float, default=0.3, help="Dropout rate before linear head")
-    parser.add_argument("--decoder-type", type=str, default="linear", choices=["linear", "mlp", "mlp_deep"],
-                        help="Decoder head architecture: 'linear' (1-layer), 'mlp' (2-layer), 'mlp_deep' (3-layer)")
+    parser.add_argument("--decoder-type", type=str, default="linear", choices=["linear", "mlp", "mlp_deep","mlp_deeper"],
+                        help="Decoder head architecture: 'linear' (1-layer), 'mlp' (2-layer), 'mlp_deep' (3-layer),'mlp_deeper' (4-layer)")
     parser.add_argument("--scheduler", type=str, default="cosine", choices=["none", "cosine", "plateau"],
                         help="Learning rate scheduler")
     parser.add_argument("--num-workers", type=int, default=2, help="DataLoader worker processes")

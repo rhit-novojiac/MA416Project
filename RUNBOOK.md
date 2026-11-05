@@ -101,7 +101,7 @@ All directories and parameters can be overridden via CLI flags to match any team
 | `--batch-size` | `int` | `32` | Batch size for training and validation DataLoaders. |
 | `--lr` | `float` | `0.001` | Learning rate for the trainable decoder head. |
 | `--dropout` | `float` | `0.3` | Dropout probability applied before classification. |
-| `--decoder-type` | `str` | `linear` | Head architecture: `linear`, `mlp`, or `mlp_deep`. |
+| `--decoder-type` | `str` | `linear` | Head architecture: `linear`, `mlp`, `mlp_deep`, or `mlp_deeper`. |
 | `--scheduler` | `str` | `cosine` | LR schedule: `cosine`, `plateau`, or `none`. |
 | `--weight-decay` | `float` | `1e-4` | L2 weight decay for the Adam optimizer. |
 | `--num-workers` | `int` | `2` | Number of DataLoader worker processes (`0` for Windows debugging, `8`-`16` on cluster nodes). |
