@@ -1,6 +1,6 @@
 # DeFungi ResNet-18 Transfer Learning — Team Runbook & Execution Guide
 
-This document provides complete instructions for setting up the environment, running the ResNet-18 transfer learning pipeline on the **DeFungi** microscopic image dataset, managing checkpoints across training sessions, and generating benchmark evaluation figures.
+This document provides complete instructions for setting up the environment, running the ResNet-18 transfer learning pipeline on the **DeFungi** microscopic image dataset, executing Stage 1 feature extraction and Stage 2 dynamic fine-tuning, managing checkpoints across training sessions, and generating benchmark evaluation figures.
 
 All commands and file paths in this guide are **generic and portable** across different machines and operating systems.
 
@@ -8,20 +8,18 @@ All commands and file paths in this guide are **generic and portable** across di
 
 ## 1. Project Overview & Milestones
 
-The goal of this project is to classify fungal microscopic morphotypes across 5 classes (`H1`, `H2`, `H3`, `H5`, `H6`) using transfer learning.
+The goal of this project is to classify fungal microscopic morphotypes across 5 classes (`H1`, `H2`, `H3`, `H5`, `H6`) using transfer learning and deep convolutional feature fine-tuning.
 
-| Project Milestone | Due Date | Target Threshold | ResNet-18 Status |
+| Project Milestone | Target Threshold | Status | Implementation Details |
 |---|---|---|---|
-| **Majority Baseline (Zero-R)** | — | 48.33% Accuracy / 13.03% Macro F1 | Baseline from `Baseline.ipynb` |
-| **Minimum Requirement** | Oct 30 | Beat majority baseline, select pre-trained model, replace decoder head | **Achieved (63.96% Acc / 64.93% F1)** |
-| **Reasonable Goal** | Nov 6 | >10% over baseline (>58.33% Acc / >23.03% F1), train & validate decoder | **Achieved (+15.63% Acc / +51.90% F1)** |
-| **Stretch Goal** | Nov 13 | >20% over minimum requirement (>68.33% Acc), fine-tune full backbone | Supported via `unfreeze_backbone()` |
+| **Majority Baseline (Zero-R)** | 48.33% Accuracy / 13.03% Macro F1 | Baseline | Calculated from empirical class frequencies in `Baseline.ipynb` |
+| **Minimum Requirement** | Beat majority baseline, select pre-trained model, replace decoder head | **Achieved (67.92% F1)** | ResNet-18 + Linear Decoder Head (`--decoder-type linear`) |
+| **Reasonable Goal** | >10% over baseline (>58.33% Acc / >23.03% F1), train & validate decoder | **Achieved (78.84% F1)** | ResNet-18 + MLP Decoder Head (`--decoder-type mlp`) |
+| **Stretch Goal (Fine-Tuning)** | >20% over minimum requirement, fine-tune backbone representations | **Achieved (87.98% F1)** | ResNet-18 + Deep MLP + Dynamic Fine-Tuning (`--fine-tune`) |
 
 ---
 
 ## 2. Directory Structure
-
-The transfer learning module is self-contained in `src/transfer/`:
 
 ```text
 MA416Project/
@@ -32,12 +30,22 @@ MA416Project/
 │   └── transfer/
 │       ├── __init__.py           # Package marker
 │       ├── dataset.py            # Stratified 80/20 data split, transforms, DataLoader setup
-│       ├── model.py              # ResNet-18 backbone + customizable decoder heads (linear, mlp, mlp_deep)
-│       └── train.py              # Full training, validation, checkpointing, and evaluation script
+│       ├── model.py              # ResNet-18 backbone + custom heads (linear, mlp, mlp_deep, mlp_deeper)
+│       └── train.py              # Training, dynamic fine-tuning, checkpointing, and evaluation CLI
 ├── checkpoints/                  # Saved .pt model checkpoints (created automatically)
-├── plots/                        # Saved curves and confusion matrices (created automatically)
+│   ├── resnet18_*_best.pt        # Stage 1 feature extraction best checkpoints
+│   └── resnet18_*_finetuned_best.pt # Stage 2 fine-tuned best checkpoints
+├── plots/                        # Saved curves, confusion matrices, and history (created automatically)
+├── hf_space/                     # Hugging Face Spaces Gradio web application
+│   ├── app.py                    # Interactive demo interface
+│   └── model_utils.py            # Model loader & inference wrapper
+├── tests/                        # Automated pytest suite
+│   ├── test_checkpoint_history.py
+│   ├── test_fine_tune.py
+│   ├── test_cli_workflow.py
+│   └── test_multisession_training.py
 ├── pyproject.toml                # Portable interpreter & type checker configuration
-└── pyrefly.toml                  # Standalone IDE type checker configuration
+└── RUNBOOK.md                    # This document
 ```
 
 ---
@@ -45,9 +53,9 @@ MA416Project/
 ## 3. Environment Setup & Prerequisites
 
 ### Required Packages
-- **Python**: 3.10 – 3.12 (Python 3.12 recommended)
+- **Python**: 3.10 – 3.13 (Python 3.12 recommended)
 - **PyTorch & torchvision**: GPU-accelerated (CUDA) or CPU fallback
-- **Data & Evaluation**: `scikit-learn`, `pandas`, `pillow`, `matplotlib`, `numpy`, `tqdm`
+- **Data & Evaluation**: `scikit-learn`, `pandas`, `pillow`, `matplotlib`, `numpy`, `tqdm`, `gradio`, `pytest`
 
 ### Activating the Virtual Environment
 
@@ -55,11 +63,8 @@ Before running any script, activate your virtual environment in your terminal:
 
 #### Windows (PowerShell):
 ```powershell
-# If using a local .venv in the project root:
+# If using the project's local .venv:
 .\.venv\Scripts\Activate.ps1
-
-# Or if using a shared course environment elsewhere:
-& "<path-to-your-venv>\Scripts\Activate.ps1"
 ```
 
 #### Windows (Command Prompt):
@@ -72,185 +77,186 @@ Before running any script, activate your virtual environment in your terminal:
 source .venv/bin/activate
 ```
 
-*(Once activated, your terminal prompt will show `(.venv)`, and standard `python` commands will invoke the correct environment on all operating systems.)*
+> [!TIP]
+> Always use `.\.venv\Scripts\python.exe` (or ensure your shell prompt shows `(.venv)`) to utilize NVIDIA CUDA acceleration rather than unaccelerated CPU execution.
 
 ---
 
-## 4. How to Run the Training Pipeline
+## 4. Stage 1: Feature Extraction (Decoder Training)
 
-### Quick Start (Standard Baseline Training)
-Train ResNet-18 with a linear decoder head for 10 epochs using a batch size of 32:
+In Stage 1, the ResNet-18 convolutional backbone is **frozen** (all 11,176,512 parameters frozen), and only the classification decoder head is trained.
 
-```bash
-python src/transfer/train.py --epochs 10 --batch-size 32
+### Architecture Options:
+- `--decoder-type linear`: 1-layer projection (`Dropout(0.3) -> Linear(512, 5)`) — *2,565 parameters*
+- `--decoder-type mlp`: 2-layer MLP (`Linear(512, 256) -> ReLU -> Dropout -> Linear(256, 5)`) — *132,613 parameters*
+- `--decoder-type mlp_deep`: 3-layer MLP — *198,405 parameters*
+- `--decoder-type mlp_deeper`: 4-layer MLP — *264,197 parameters*
+
+### Example Stage 1 Commands:
+```powershell
+# Train MLP decoder for 15 epochs
+python src/transfer/train.py --decoder-type mlp --epochs 15
+
+# Train Linear decoder for 10 epochs
+python src/transfer/train.py --decoder-type linear --epochs 10
+
+# Train with specific batch size and learning rate
+python src/transfer/train.py --decoder-type mlp --batch-size 64 --lr 0.001 --epochs 20
 ```
 
-> [!NOTE]
-> The script automatically detects an NVIDIA GPU if available; otherwise, it seamlessly falls back to CPU.
+---
+
+## 5. Stage 2: Dynamic Fine-Tuning Pipeline
+
+In Stage 2, the convolutional backbone layers are **selectively unfrozen** and trained with differential learning rates starting from the best Stage 1 model weights.
+
+### How Dynamic Fine-Tuning Works:
+1. **Automatic Discovery & Ranking**: Pass `--fine-tune` (or `--fine-tune auto`). The script inspects all candidate checkpoints in `checkpoints/`, ranks them by validation Macro-F1 score, and selects the champion model.
+2. **Auto-Architecture Detection**: Detects whether the checkpoint is `linear`, `mlp`, `mlp_deep`, or `mlp_deeper` directly from weights/metadata.
+3. **Selective Layer Unfreezing**: Unfreezes the target convolutional blocks (`layer4` by default).
+4. **Differential Optimizer**: Assigns a smaller learning rate to the backbone (e.g. `1e-5`) and a standard rate to the head (e.g. `1e-4`) to prevent catastrophic forgetting.
+5. **Separate Output Artifacts**: Saves to `resnet18_{decoder}_finetuned_*`, leaving your Stage 1 baseline checkpoints completely intact.
+
+### Common Fine-Tuning Commands:
+
+#### 1. Automatic Champion Fine-Tuning (Easiest)
+Automatically scans checkpoints, picks the top model, and fine-tunes for 10 epochs:
+```powershell
+python src/transfer/train.py --fine-tune --epochs 10
+```
+
+#### 2. Fine-Tune a Specific Decoder Architecture
+Picks the best checkpoint matching that decoder:
+```powershell
+python src/transfer/train.py --fine-tune --decoder-type mlp --epochs 10
+```
+
+#### 3. Fine-Tune an Explicit Checkpoint Path
+```powershell
+python src/transfer/train.py --fine-tune checkpoints/resnet18_mlp_best.pt --epochs 10
+```
+
+#### 4. Custom Unfreezing Layers & Learning Rates
+```powershell
+# Unfreeze layer4 only (Recommended):
+python src/transfer/train.py --fine-tune --fine-tune-layers layer4 --fine-tune-backbone-lr 1e-5 --fine-tune-lr 1e-4 --epochs 15
+
+# Unfreeze both layer3 and layer4:
+python src/transfer/train.py --fine-tune --fine-tune-layers layer3_4 --epochs 15
+
+# Unfreeze entire network:
+python src/transfer/train.py --fine-tune --fine-tune-layers all --fine-tune-backbone-lr 5e-6 --epochs 15
+```
 
 ---
 
-### Command-Line Arguments & Modifiable Paths
-
-All directories and parameters can be overridden via CLI flags to match any teammate's file structure:
+## 6. Complete CLI Options Reference
 
 | Argument | Type | Default | Description |
 |---|---|---|---|
-| `--epochs` | `int` | `10` | Number of additional epochs to train in this session. |
-| `--total-epochs` | `int` | `None` | Target total epochs count (overrides `--epochs` to reach this specific epoch). |
+| `--fine-tune` | `str` (optional) | `None` | Enable fine-tuning mode. Pass `'auto'` or omit value to pick best model, or pass a `.pt` path. |
+| `--fine-tune-layers` | `layer4` \| `layer3_4` \| `all` | `layer4` | Backbone layers to unfreeze during fine-tuning. |
+| `--fine-tune-backbone-lr` | `float` | `1e-5` | Learning rate for unfrozen convolutional backbone layers. |
+| `--fine-tune-lr` | `float` | `1e-4` | Learning rate for decoder classification head during fine-tuning. |
+| `--decoder-type` | `linear` \| `mlp` \| `mlp_deep` \| `mlp_deeper` | `linear` | Classification head architecture. |
+| `--epochs` | `int` | `10` | Number of epochs to train in this session. |
+| `--total-epochs` | `int` | `None` | Target cumulative epoch count (overrides `--epochs` when resuming). |
 | `--batch-size` | `int` | `32` | Batch size for training and validation DataLoaders. |
-| `--lr` | `float` | `0.001` | Learning rate for the trainable decoder head. |
-| `--dropout` | `float` | `0.3` | Dropout probability applied before classification. |
-| `--decoder-type` | `str` | `linear` | Head architecture: `linear`, `mlp`, `mlp_deep`, or `mlp_deeper`. |
-| `--scheduler` | `str` | `cosine` | LR schedule: `cosine`, `plateau`, or `none`. |
-| `--weight-decay` | `float` | `1e-4` | L2 weight decay for the Adam optimizer. |
-| `--num-workers` | `int` | `2` | Number of DataLoader worker processes (`0` for Windows debugging, `8`-`16` on cluster nodes). |
-| `--no-class-weights`| `flag` | `False` | Disables inverse-frequency weighting in CrossEntropyLoss. |
-| `--amp` / `--no-amp`| `flag` | `Auto` | Automatic Mixed Precision (enabled automatically when CUDA is present). |
-| `--no-multi-gpu` | `flag` | `False` | Disables `DataParallel` across multiple GPU shards. |
-| `--compile` | `flag` | `False` | Enables `torch.compile()` PyTorch 2.x Inductor kernel fusion. |
-| `--resume` | `str` | `None` | Path to `.pt` checkpoint to resume from, or pass without argument (`--resume`) to auto-resume latest. |
+| `--lr` | `float` | `1e-3` | Initial learning rate for Stage 1 feature extraction. |
+| `--weight-decay` | `float` | `1e-4` | L2 weight regularization for Adam optimizer. |
+| `--dropout` | `float` | `0.3` | Dropout probability applied before classification layers. |
+| `--scheduler` | `cosine` \| `plateau` \| `none` | `cosine` | Learning rate scheduler. |
+| `--num-workers` | `int` | `2` | DataLoader worker processes (`0` for Windows debugging, `4`-`8` on Linux). |
+| `--no-class-weights` | `flag` | `False` | Disables inverse-frequency class weighting in CrossEntropyLoss. |
+| `--amp` / `--no-amp` | `flag` | `Auto` | Enable/disable Automatic Mixed Precision (AMP). |
+| `--no-multi-gpu` | `flag` | `False` | Disables DataParallel across multiple GPU devices. |
+| `--compile` | `flag` | `False` | Enables `torch.compile()` kernel fusion (PyTorch 2.x). |
+| `--max-batches` | `int` | `None` | Caps batches per epoch (useful for dry runs and fast testing). |
+| `--resume` | `str` (optional) | `None` | Resume from specific checkpoint or pass `'auto'` for latest. |
 | `--auto-resume` | `flag` | `False` | Automatically resume from latest checkpoint if one exists. |
 | `--dataset-dir` | `str` | `None` | Custom path to the `defungi/` directory if stored outside root. |
-| `--checkpoint-dir`| `str` | `checkpoints` | Custom target folder for saved model weights. |
-| `--plots-dir` | `str` | `plots` | Custom target folder for charts, confusion matrices, and history files. |
-
-#### High-Performance Multi-GPU / Multi-Shard Execution:
-On a powerful cluster node or multi-GPU server (e.g., 8 GPU shards):
-```bash
-python src/transfer/train.py --batch-size 128 --num-workers 8 --lr 0.002 --epochs 15
-```
-
-#### Example: Specifying Custom Paths
-If your dataset is located in another folder or drive:
-```bash
-python src/transfer/train.py --dataset-dir "../shared_data/defungi" --checkpoint-dir "./my_checkpoints" --plots-dir "./my_plots"
-```
+| `--checkpoint-dir` | `str` | `checkpoints` | Directory to save and load model weights. |
+| `--plots-dir` | `str` | `plots` | Directory to save training curves, confusion matrices, and history files. |
 
 ---
 
-## 5. Experimenting with Different Decoder Heads
+## 7. Checkpoint Management & Multi-Session Resumption
 
-Three distinct decoder architectures are built into `model.py` to compare representation capacity:
-
-```mermaid
-flowchart LR
-    In["ResNet-18 Backbone\n(Frozen: 11,176,512 params)\nOutput: 512-dim"] --> Split{Decoder Type}
-    
-    Split -->|"linear (Minimal)"| D1["Dropout(0.3) -> Linear(512, 5)\n[2,565 params]"]
-    Split -->|"mlp (Reasonable)"| D2["Linear(512, 256) -> BatchNorm -> ReLU -> Dropout -> Linear(256, 5)\n[133,125 params]"]
-    Split -->|"mlp_deep (Stretch)"| D3["Linear(512, 256) -> BN -> GELU -> Linear(256, 128) -> BN -> GELU -> Linear(128, 5)\n[165,893 params]"]
-```
-
-### Commands to Compare Heads:
-
-1. **Linear Projection Head (Minimal Requirement)**:
-   ```bash
-   python src/transfer/train.py --decoder-type linear --epochs 10
-   ```
-2. **2-Layer MLP Head with BatchNorm (Reasonable Goal)**:
-   ```bash
-   python src/transfer/train.py --decoder-type mlp --epochs 10 --lr 0.0005
-   ```
-3. **3-Layer Deep MLP Head with GELU (Stretch Goal Candidate)**:
-   ```bash
-   python src/transfer/train.py --decoder-type mlp_deep --epochs 10 --lr 0.0003
-   ```
-
----
-
-## 6. Checkpoint Management & Continuous Multi-Session Training
-
-The training pipeline is fully crash-resilient and continuous across sessions:
+The pipeline is fully crash-resilient and continuous across sessions:
 1. **`checkpoints/resnet18_<decoder>_best.pt`**: Updated whenever validation Macro-F1 improves.
-2. **`checkpoints/resnet18_<decoder>_latest.pt`**: Updated at the end of **every single epoch**. Contains full model weights, optimizer buffers, LR scheduler state, and cumulative metric history.
-3. **Per-Epoch Crash Resilience**: At the end of every epoch, `latest.pt`, `plots/resnet18_<decoder>_training_curves.png`, `history.json`, and `history.csv` are flushed to disk. If a run ends prematurely (`Ctrl+C` or system shutdown), all progress up to the last completed epoch is preserved.
+2. **`checkpoints/resnet18_<decoder>_latest.pt`**: Updated at the end of **every single epoch**. Contains full model weights, optimizer buffers, LR scheduler state, and cumulative history.
+3. **`checkpoints/resnet18_<decoder>_finetuned_*.pt`**: Separate fine-tuning checkpoints that preserve Stage 1 models.
 
-### How to Stop & Resume Training Later
+### Resuming an Interrupted Run:
+```powershell
+# Automatically resume latest checkpoint for 5 more epochs:
+python src/transfer/train.py --resume auto --epochs 5
 
-#### Step 1: Run First Session (e.g., 5 Epochs)
-```bash
-python src/transfer/train.py --epochs 5 --decoder-type linear
-```
-
-#### Step 2: Resume Seamlessly (Continuing as One Single Run)
-You can resume either with the checkpoint path or simply pass `--resume` to auto-resume:
-```bash
-# Auto-resume latest checkpoint and train 5 more epochs:
-python src/transfer/train.py --epochs 5 --decoder-type linear --resume
-
-# Or specify a target total epoch number (e.g., train until Epoch 20 total):
-python src/transfer/train.py --total-epochs 20 --decoder-type linear --resume
+# Or resume fine-tuning:
+python src/transfer/train.py --fine-tune --resume auto --epochs 5
 ```
 
 The script automatically:
 - Restores model weights, Adam optimizer momentum, and LR scheduler decay state.
-- Loads previous metric history so training curves **extend continuously** rather than resetting or deleting previous data.
-- Appends new epochs to `history.json` and `history.csv` for downstream analysis.
-- Preserves the previous highest Macro-F1 for saving new best checkpoints.
+- Loads previous metric history so training curves **extend continuously** without resetting or overwriting.
+- Preserves the previous highest Macro-F1 score.
 
 ---
 
-## 7. Output Artifacts & Results Inspection
+## 8. Output Artifacts & Results Inspection
 
-During and upon completion of training, the pipeline continuously maintains:
+After every epoch and upon completion, the pipeline generates:
 
-1. **Terminal Benchmark Summary**:
-   - Classification report (precision, recall, F1 per class).
-   - Side-by-side comparison table against the Majority Class Baseline.
-2. **Training Curves (`plots/resnet18_<decoder>_training_curves.png`)**:
+1. **Training Curves (`plots/resnet18_<decoder>_training_curves.png`)**:
    - Subplot 1: Cross-Entropy Loss vs. Epoch across all sessions.
-   - Subplot 2: Train & Val Accuracy vs. Epoch with the 48.33% baseline line.
-   - Subplot 3: Validation Macro F1 vs. Epoch with the 13.03% baseline line.
-   - Continuously updated after every epoch; never deleted or truncated upon resumption.
-3. **Confusion Matrix Plot (`plots/resnet18_<decoder>_confusion_matrix.png`)**:
-   - Heatmap of true labels vs. predicted labels for test images, updated whenever a new best model is found and at final evaluation.
-4. **Structured History Data (`plots/resnet18_<decoder>_history.json` & `.csv`)**:
-   - Complete tabular log containing `epoch`, `train_loss`, `train_acc`, `val_loss`, `val_acc`, `val_macro_f1`, and `lr`.
-   - CSV can be opened directly in Excel, Google Sheets, or pandas for report generation.
+   - Subplot 2: Train & Val Accuracy vs. Epoch (with 48.33% baseline reference line).
+   - Subplot 3: Validation Macro F1 vs. Epoch (with 13.03% baseline reference line).
+2. **Confusion Matrix Plot (`plots/resnet18_<decoder>_confusion_matrix.png`)**:
+   - Normalized heatmap of true labels vs. predicted labels on the 1,823 test images.
+3. **Structured History Data (`plots/resnet18_<decoder>_history.json` & `.csv`)**:
+   - Tabular log containing `epoch`, `train_loss`, `train_acc`, `val_loss`, `val_acc`, `val_macro_f1`, and `lr`.
+   - CSV can be opened directly in Excel or Google Sheets for report plotting.
+4. **Terminal Benchmark Summary**:
+   - Full classification report (precision, recall, F1 per class).
+   - Side-by-side comparison table against the Majority Class Baseline.
 
 ---
 
-## 8. Running the Automated Test Suite
+## 9. Interactive Web Demo (Gradio)
 
-The test suite validates continuous history logging, crash resilience, multi-session resumption, and CLI workflows.
+To launch the web interface locally:
 
-### Fast Tests (Unit & Multi-Session Simulation — ~15 seconds)
-Recommended for day-to-day verification:
 ```powershell
-pytest -v tests/test_checkpoint_history.py tests/test_multisession_training.py
+python hf_space/app.py
 ```
+Open **`http://127.0.0.1:7860`** in your browser.
 
-### Full Test Suite (Including Subprocess Real-Data CLI Training)
-```powershell
-pytest -v tests/
-```
-*(Note: `test_cli_workflow.py` trains 2 full epochs on the DeFungi dataset through a subprocess to test actual disk persistence; on CPU this takes ~10 minutes).*
+- Switch between models (MLP Decoder, Linear Decoder, Fine-Tuned).
+- Drag-and-drop any microscopic fungal image or test preloaded sample images.
+- See real-time prediction confidence bars and scientific species details.
 
-### Running Pyrefly Type Checks
+For deployment to Hugging Face Spaces, see [`hf_space/DEPLOYMENT.md`](file:///c:/Users/novojiac/gitOrganized/MA416Project/hf_space/DEPLOYMENT.md).
+
+---
+
+## 10. Running the Automated Test Suite
+
+The test suite validates layer freezing/unfreezing, dynamic model discovery, history recovery, crash resilience, and CLI subprocess execution:
+
 ```powershell
-& "c:\Users\novojiac\.antigravity-ide\extensions\meta.pyrefly-1.4.0-win32-x64\bin\pyrefly.exe" check
+# Run all tests (all 11 tests complete in ~80 seconds)
+pytest -v
+
+# Run only fine-tuning unit tests:
+pytest -v tests/test_fine_tune.py
+
+# Run only checkpoint history persistence tests:
+pytest -v tests/test_checkpoint_history.py
 ```
 
 ---
 
-## 9. IDE & Language Server Configuration (Optional)
-
-If teammates see import warnings (`torchvision`, `torch`) in their editor:
-
-1. Ensure the Python interpreter in their IDE is set to their active virtual environment.
-2. The project contains a generic [`pyproject.toml`](pyproject.toml) where the interpreter path can be customized:
-   ```toml
-   [tool.pyrefly]
-   # Adjust to point to your local virtualenv if not in .venv
-   python-interpreter-path = ".venv/Scripts/python.exe"
-   search-path = ["src", "src/transfer"]
-   ```
-3. In VS Code or Antigravity IDE, press `Ctrl + Shift + P` and select **`Developer: Reload Window`** to refresh diagnostics.
-
----
-
-## 9. Troubleshooting FAQ
+## 11. Troubleshooting FAQ
 
 > [!TIP]
 > **Issue: Out of Memory (CUDA OOM)**
@@ -260,4 +266,9 @@ If teammates see import warnings (`torchvision`, `torch`) in their editor:
 > [!IMPORTANT]
 > **Issue: Cannot find `defungi` directory**
 > - The script automatically searches for a `defungi` folder in the current directory and parent directories.
-> - If stored elsewhere, provide the explicit relative or absolute path via `--dataset-dir <path>`.
+> - If stored elsewhere, specify: `--dataset-dir "path/to/defungi"`.
+
+> [!NOTE]
+> **Issue: Training is running slowly on CPU**
+> - Ensure your virtual environment is activated (`.\.venv\Scripts\Activate.ps1`).
+> - Verify GPU availability by running: `python -c "import torch; print(torch.cuda.is_available())"`. It should print `True`.
