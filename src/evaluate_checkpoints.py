@@ -128,7 +128,7 @@ def main():
         ckpt_dir / "resnet18_linear_best.pt",
         ckpt_dir / "resnet18_mlp_best.pt",
         ckpt_dir / "resnet18_mlp_deeper_best.pt",
-        ckpt_dir / "resnet18_mlp_finetuned_best.pt"
+        ckpt_dir / "resnet18_mlp_deep_finetuned_best.pt"
     ]
     
     results = []

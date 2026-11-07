@@ -235,9 +235,10 @@ The project provides two interactive web demos for classifying microscopic funga
 A high-performance, serverless client-side web application hosted on **GitHub Pages**:
 - **Zero server cold starts**: Models execute in-browser via WebAssembly / WebGL.
 - **Model switching**: Real-time evaluation with dropdown selection between:
-  - **Fine-Tuned MLP Champion** (91.11% Acc | 92.96% Macro F1)
-  - **Deeper 4-Layer MLP** (86.01% Acc | 87.98% Macro F1)
-  - **Linear Head Baseline** (66.21% Acc | 67.92% Macro F1)
+  - **3-Layer Decoder (Fine-Tuned Champion)** (91.11% Acc | 92.96% Macro F1)
+  - **4-Layer Decoder** (86.01% Acc | 87.98% Macro F1)
+  - **2-Layer Decoder** (78.77% Acc | 82.14% Macro F1)
+  - **1-Layer Decoder (Baseline)** (66.21% Acc | 67.92% Macro F1)
 - **Zero data egress**: Images remain on client machine for clinical privacy.
 - **Permanent URL**: Hosted directly from the `/docs` folder on GitHub.
 

@@ -103,8 +103,9 @@ def main():
     docs_models_dir.mkdir(parents=True, exist_ok=True)
     
     targets = [
-        (ckpt_dir / "resnet18_mlp_finetuned_best.pt", docs_models_dir / "resnet18_mlp_finetuned_best.onnx"),
+        (ckpt_dir / "resnet18_mlp_deep_finetuned_best.pt", docs_models_dir / "resnet18_mlp_deep_finetuned_best.onnx"),
         (ckpt_dir / "resnet18_mlp_deeper_best.pt", docs_models_dir / "resnet18_mlp_deeper_best.onnx"),
+        (ckpt_dir / "resnet18_mlp_best.pt", docs_models_dir / "resnet18_mlp_best.onnx"),
         (ckpt_dir / "resnet18_linear_best.pt", docs_models_dir / "resnet18_linear_best.onnx")
     ]
     

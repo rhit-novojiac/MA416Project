@@ -32,14 +32,17 @@
         <div class="control-group">
           <label for="modelSelect"><strong>Select Neural Network Model:</strong></label>
           <select id="modelSelect">
-            <option value="models/resnet18_mlp_finetuned_best.onnx" selected>
-              ResNet-18 (Fine-Tuned MLP Champion) — 91.11% Test Acc | 92.96% F1
+            <option value="models/resnet18_mlp_deep_finetuned_best.onnx" selected>
+              3-Layer Decoder (Fine-Tuned Champion) — 91.11% Acc | 92.96% F1
             </option>
             <option value="models/resnet18_mlp_deeper_best.onnx">
-              ResNet-18 (Deeper 4-Layer MLP) — 86.01% Test Acc | 87.98% F1
+              4-Layer Decoder — 86.01% Acc | 87.98% F1
+            </option>
+            <option value="models/resnet18_mlp_best.onnx">
+              2-Layer Decoder — 78.77% Acc | 82.14% F1
             </option>
             <option value="models/resnet18_linear_best.onnx">
-              ResNet-18 (Linear Head Baseline) — 66.21% Test Acc | 67.92% F1
+              1-Layer Decoder (Baseline) — 66.21% Acc | 67.92% F1
             </option>
           </select>
         </div>
@@ -197,7 +200,7 @@
           </thead>
           <tbody>
             <tr class="highlight-row">
-              <td><strong>ResNet-18 + Fine-Tuned MLP (Champion)</strong></td>
+              <td><strong>3-Layer Decoder (Fine-Tuned Champion)</strong></td>
               <td>Stage 2 Backbone Fine-Tuning (Layer 4)</td>
               <td><span class="metric-badge metric-champ">91.11%</span></td>
               <td><span class="metric-badge metric-champ">92.96%</span></td>
@@ -205,7 +208,7 @@
               <td>ONNX Runtime Web (WASM)</td>
             </tr>
             <tr>
-              <td><strong>ResNet-18 + Deeper 4-Layer MLP</strong></td>
+              <td><strong>4-Layer Decoder</strong></td>
               <td>Stage 1 Feature Extraction</td>
               <td><span class="metric-badge">86.01%</span></td>
               <td><span class="metric-badge">87.98%</span></td>
@@ -213,15 +216,15 @@
               <td>ONNX Runtime Web (WASM)</td>
             </tr>
             <tr>
-              <td><strong>ResNet-18 + Standard 2-Layer MLP</strong></td>
+              <td><strong>2-Layer Decoder</strong></td>
               <td>Stage 1 Feature Extraction</td>
               <td><span class="metric-badge">78.77%</span></td>
               <td><span class="metric-badge">82.14%</span></td>
               <td>83.88%</td>
-              <td>PyTorch / ONNX</td>
+              <td>ONNX Runtime Web (WASM)</td>
             </tr>
             <tr>
-              <td><strong>ResNet-18 + Linear Head (Baseline)</strong></td>
+              <td><strong>1-Layer Decoder (Baseline)</strong></td>
               <td>Stage 1 Feature Extraction</td>
               <td><span class="metric-badge">66.21%</span></td>
               <td><span class="metric-badge">67.92%</span></td>

@@ -24,9 +24,10 @@ Open your browser to: **`http://localhost:8000`**
 ### Features Available in the Demo:
 - **Client-Side WebAssembly (WASM)**: Inference runs locally in the browser with zero cloud server dependencies.
 - **Model Switching**: Compare in real-time between:
-  1. **ResNet-18 (Fine-Tuned MLP Champion)** &bull; **91.11%** Test Accuracy, **92.96%** Macro F1
-  2. **ResNet-18 (Deeper 4-Layer MLP)** &bull; **86.01%** Test Accuracy, **87.98%** Macro F1
-  3. **ResNet-18 (Linear Head Baseline)** &bull; **66.21%** Test Accuracy, **67.92%** Macro F1
+  1. **3-Layer Decoder (Fine-Tuned Champion)** &bull; **91.11%** Test Accuracy, **92.96%** Macro F1
+  2. **4-Layer Decoder** &bull; **86.01%** Test Accuracy, **87.98%** Macro F1
+  3. **2-Layer Decoder** &bull; **78.77%** Test Accuracy, **82.14%** Macro F1
+  4. **1-Layer Decoder (Baseline)** &bull; **66.21%** Test Accuracy, **67.92%** Macro F1
 - **Click-to-Test Sample Gallery**: Instant evaluation on preloaded microscopic examples (H1, H2, H3, H5, H6).
 - **Drag-and-Drop / Clipboard**: Upload any external microscopic fungi image or paste directly from clipboard.
 - **Interactive Probabilities & Clinical Notes**: Real-time confidence bars and scientific descriptions for dermatophyte species.
