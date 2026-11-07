@@ -39,11 +39,21 @@ env/
 *.pt
 *.pth
 *.onnx
+!docs/models/*.onnx
 *.h5
 *.ckpt
 checkpoints/
 runs/
 wandb/
+
+# Training history, metrics, and generated plots
+plots/
+plots*/
+local_plots_backup/
+*_history.json
+*_history.csv
+*.png
+!docs/**
 
 # Dataset folders (large image data)
 defungi/

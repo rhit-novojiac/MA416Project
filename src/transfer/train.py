@@ -429,7 +429,9 @@ def main():
                         help="Decoder head architecture: 'linear', 'mlp', 'mlp_deep', or 'mlp_deeper'")
     parser.add_argument("--scheduler", type=str, default="cosine", choices=["none", "cosine", "plateau"],
                         help="Learning rate scheduler")
-    parser.add_argument("--num-workers", type=int, default=2, help="DataLoader worker processes")
+    default_workers = 0 if sys.platform.startswith("win") else 2
+    parser.add_argument("--num-workers", type=int, default=default_workers,
+                        help=f"DataLoader worker processes (default: {default_workers} on this platform to prevent Windows pagefile exhaustion)")
     parser.add_argument("--no-class-weights", action="store_true", help="Disable inverse class weighting")
     parser.add_argument("--amp", action="store_true", default=torch.cuda.is_available(),
                         help="Enable Automatic Mixed Precision (AMP)")

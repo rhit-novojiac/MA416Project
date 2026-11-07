@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Microscopic Fungi Classifier | DeFungi Dataset</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <!-- ONNX Runtime Web CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.min.js"></script>
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header class="header">
+      <div class="title-container">
+        <h1>🍄 Microscopic Fungi Classifier</h1>
+        <p class="subtitle">CSSE/MA416 Deep Learning Term Project &bull; Rose-Hulman Institute of Technology</p>
+      </div>
+      <div class="badges">
+        <span class="badge badge-accent">🚀 Client-Side ONNX WebAssembly</span>
+        <span class="badge badge-highlight">🏆 91.11% Champion Accuracy</span>
+        <span class="badge badge-neutral">⚡ Zero-Latency Permanent Demo</span>
+      </div>
+    </header>
+
+    <!-- Model Selector & Status Bar -->
+    <section class="model-control-card">
+      <div class="control-row">
+        <div class="control-group">
+          <label for="modelSelect"><strong>Select Neural Network Model:</strong></label>
+          <select id="modelSelect">
+            <option value="models/resnet18_mlp_finetuned_best.onnx" selected>
+              ResNet-18 (Fine-Tuned MLP Champion) — 91.11% Test Acc | 92.96% F1
+            </option>
+            <option value="models/resnet18_mlp_deeper_best.onnx">
+              ResNet-18 (Deeper 4-Layer MLP) — 86.01% Test Acc | 87.98% F1
+            </option>
+            <option value="models/resnet18_linear_best.onnx">
+              ResNet-18 (Linear Head Baseline) — 66.21% Test Acc | 67.92% F1
+            </option>
+          </select>
+        </div>
+        <div class="model-status" id="modelStatus">
+          <span class="status-indicator ready" id="statusDot"></span>
+          <span id="statusText">Initializing ONNX Runtime...</span>
+        </div>
+      </div>
+      <div class="loading-bar-container" id="progressBarContainer">
+        <div class="loading-bar" id="progressBar"></div>
+      </div>
+    </section>
+
+    <!-- Main Interactive Grid -->
+    <div class="demo-grid">
+      <!-- Left Column: Input & Samples -->
+      <div class="grid-card">
+        <h2>1. Microscopic Image Input</h2>
+        <p class="section-desc">Upload a clinical fungal microscopic image, paste from clipboard, or pick a sample below.</p>
+
+        <div class="dropzone" id="dropzone">
+          <input type="file" id="fileInput" accept="image/*" hidden>
+          <div class="dropzone-content" id="dropzonePrompt">
+            <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="17 8 12 3 7 8"></polyline>
+              <line x1="12" y1="3" x2="12" y2="15"></line>
+            </svg>
+            <p><strong>Click to browse</strong> or drag &amp; drop an image here</p>
+            <span class="file-types">Supports JPG, PNG, WebP &bull; Auto-scaled to 224&times;224</span>
+          </div>
+          <div class="preview-container" id="previewContainer" style="display: none;">
+            <img id="previewImage" alt="Preview Image">
+            <button class="btn-clear" id="btnClear" title="Clear Image">&times;</button>
+          </div>
+        </div>
+
+        <div class="samples-section">
+          <h3>Sample Test Images (Click to Classify):</h3>
+          <div class="samples-grid">
+            <button class="sample-btn" data-src="examples/H1_example.jpg" data-class="H1">
+              <img src="examples/H1_example.jpg" alt="H1 Sample">
+              <span><strong>H1</strong>: <em>T. rubrum</em></span>
+            </button>
+            <button class="sample-btn" data-src="examples/H2_example.jpg" data-class="H2">
+              <img src="examples/H2_example.jpg" alt="H2 Sample">
+              <span><strong>H2</strong>: <em>T. mentagrophytes</em></span>
+            </button>
+            <button class="sample-btn" data-src="examples/H3_example.jpg" data-class="H3">
+              <img src="examples/H3_example.jpg" alt="H3 Sample">
+              <span><strong>H3</strong>: <em>E. floccosum</em></span>
+            </button>
+            <button class="sample-btn" data-src="examples/H5_example.jpg" data-class="H5">
+              <img src="examples/H5_example.jpg" alt="H5 Sample">
+              <span><strong>H5</strong>: <em>M. canis</em></span>
+            </button>
+            <button class="sample-btn" data-src="examples/H6_example.jpg" data-class="H6">
+              <img src="examples/H6_example.jpg" alt="H6 Sample">
+              <span><strong>H6</strong>: <em>M. gypseum</em></span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Column: Predictions & Clinical Context -->
+      <div class="grid-card">
+        <div class="card-header-flex">
+          <h2>2. Classification Results</h2>
+          <span class="inference-time" id="inferenceTime">Ready</span>
+        </div>
+        <p class="section-desc">Class probabilities computed locally in real time inside your browser via WebAssembly.</p>
+
+        <!-- Top Prediction Banner -->
+        <div class="prediction-banner" id="predictionBanner">
+          <div class="banner-placeholder">Upload or click an image above to run classification.</div>
+        </div>
+
+        <!-- Probability Distribution Bars -->
+        <div class="probabilities-container" id="probabilitiesContainer">
+          <div class="prob-row" data-class="H1">
+            <div class="prob-meta">
+              <span class="prob-label"><strong>H1</strong>: <em>Trichophyton rubrum</em></span>
+              <span class="prob-val" id="val-H1">0.0%</span>
+            </div>
+            <div class="prob-track">
+              <div class="prob-fill" id="fill-H1" style="width: 0%;"></div>
+            </div>
+          </div>
+
+          <div class="prob-row" data-class="H2">
+            <div class="prob-meta">
+              <span class="prob-label"><strong>H2</strong>: <em>Trichophyton mentagrophytes</em></span>
+              <span class="prob-val" id="val-H2">0.0%</span>
+            </div>
+            <div class="prob-track">
+              <div class="prob-fill" id="fill-H2" style="width: 0%;"></div>
+            </div>
+          </div>
+
+          <div class="prob-row" data-class="H3">
+            <div class="prob-meta">
+              <span class="prob-label"><strong>H3</strong>: <em>Epidermophyton floccosum</em></span>
+              <span class="prob-val" id="val-H3">0.0%</span>
+            </div>
+            <div class="prob-track">
+              <div class="prob-fill" id="fill-H3" style="width: 0%;"></div>
+            </div>
+          </div>
+
+          <div class="prob-row" data-class="H5">
+            <div class="prob-meta">
+              <span class="prob-label"><strong>H5</strong>: <em>Microsporum canis</em></span>
+              <span class="prob-val" id="val-H5">0.0%</span>
+            </div>
+            <div class="prob-track">
+              <div class="prob-fill" id="fill-H5" style="width: 0%;"></div>
+            </div>
+          </div>
+
+          <div class="prob-row" data-class="H6">
+            <div class="prob-meta">
+              <span class="prob-label"><strong>H6</strong>: <em>Microsporum gypseum</em></span>
+              <span class="prob-val" id="val-H6">0.0%</span>
+            </div>
+            <div class="prob-track">
+              <div class="prob-fill" id="fill-H6" style="width: 0%;"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Clinical & Biological Details -->
+        <div class="species-info-card" id="speciesInfoCard">
+          <h3>🔬 Scientific &amp; Clinical Information</h3>
+          <p id="speciesInfoText">Select an image to see details on pathogenicity, morphology, and clinical relevance.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Technical Project Summary & Model Comparison -->
+    <section class="project-details-section">
+      <h2>📊 Model Architecture &amp; Benchmark Comparison</h2>
+      <p class="section-desc">Evaluated on the held-out DeFungi clinical test set (1,823 images) using inverse-frequency loss weighting.</p>
+
+      <div class="table-responsive">
+        <table class="benchmark-table">
+          <thead>
+            <tr>
+              <th>Model Architecture</th>
+              <th>Pipeline Stage</th>
+              <th>Test Accuracy</th>
+              <th>Macro F1-Score</th>
+              <th>Balanced Accuracy</th>
+              <th>Inference Backend</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="highlight-row">
+              <td><strong>ResNet-18 + Fine-Tuned MLP (Champion)</strong></td>
+              <td>Stage 2 Backbone Fine-Tuning (Layer 4)</td>
+              <td><span class="metric-badge metric-champ">91.11%</span></td>
+              <td><span class="metric-badge metric-champ">92.96%</span></td>
+              <td><strong>92.87%</strong></td>
+              <td>ONNX Runtime Web (WASM)</td>
+            </tr>
+            <tr>
+              <td><strong>ResNet-18 + Deeper 4-Layer MLP</strong></td>
+              <td>Stage 1 Feature Extraction</td>
+              <td><span class="metric-badge">86.01%</span></td>
+              <td><span class="metric-badge">87.98%</span></td>
+              <td>89.60%</td>
+              <td>ONNX Runtime Web (WASM)</td>
+            </tr>
+            <tr>
+              <td><strong>ResNet-18 + Standard 2-Layer MLP</strong></td>
+              <td>Stage 1 Feature Extraction</td>
+              <td><span class="metric-badge">78.77%</span></td>
+              <td><span class="metric-badge">82.14%</span></td>
+              <td>83.88%</td>
+              <td>PyTorch / ONNX</td>
+            </tr>
+            <tr>
+              <td><strong>ResNet-18 + Linear Head (Baseline)</strong></td>
+              <td>Stage 1 Feature Extraction</td>
+              <td><span class="metric-badge">66.21%</span></td>
+              <td><span class="metric-badge">67.92%</span></td>
+              <td>69.75%</td>
+              <td>ONNX Runtime Web (WASM)</td>
+            </tr>
+            <tr class="muted-row">
+              <td><strong>Zero-R Majority Class Predictor</strong></td>
+              <td>Class Distribution Baseline</td>
+              <td>48.33%</td>
+              <td>13.03%</td>
+              <td>20.00%</td>
+              <td>N/A</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="insights-grid">
+        <div class="insight-box">
+          <h4>💡 Transfer Learning Impact</h4>
+          <p>Fine-tuning the deeper convolutional layers (Layer 4) reduced the error rate from 21.2% down to <strong>8.89%</strong>, demonstrating how specialized microscopic feature representations adapt beyond generic ImageNet weights.</p>
+        </div>
+        <div class="insight-box">
+          <h4>🔬 Clinical Conidia Morphology</h4>
+          <p>Microsporum species (H5 &amp; H6) achieved near-perfect recognition (<strong>97%–99% F1</strong>) due to distinctive echinulate macroconidia walls, while distinguishing H1 from H2 required deeper representations due to subtle hyphal variations.</p>
+        </div>
+        <div class="insight-box">
+          <h4>⚡ Zero Server Footprint</h4>
+          <p>By compiling models to ONNX and serving through GitHub Pages, the demo requires zero cloud backend servers, experiences zero cold-start delays, and delivers permanent portfolio accessibility.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <p>CSSE/MA416 Deep Learning Project &bull; Rose-Hulman Institute of Technology &bull; Hosted on GitHub Pages</p>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
+

@@ -8,14 +8,22 @@ This guide explains how to test the Gradio demo locally and deploy it to Hugging
 
 To launch the web interface locally on your machine:
 
+### Option A: From Repository Root (Recommended & Easiest)
 ```powershell
-# Activate virtual environment if not already activated
-.\.venv\Scripts\Activate.ps1
-
-# Run the app from the hf_space directory
-cd hf_space
-python app.py
+# Direct invocation using the project's virtual environment (bypasses Windows PATH conflicts):
+.\.venv\Scripts\python.exe hf_space/app.py
 ```
+
+### Option B: From `hf_space/` Directory
+```powershell
+cd hf_space
+
+# Use the parent .venv Python directly:
+..\.venv\Scripts\python.exe app.py
+```
+
+> [!TIP]
+> If you see `ModuleNotFoundError: No module named 'torch'`, your terminal is invoking the global/Windows Store `python` instead of `.venv`. Always use `.\.venv\Scripts\python.exe` or run `.\.venv\Scripts\python.exe -m pip install torch torchvision gradio`.
 
 Open your browser to: **`http://127.0.0.1:7860`**
 

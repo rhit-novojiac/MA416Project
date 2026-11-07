@@ -68,13 +68,16 @@ pip install -r requirements.txt
 
 | Task | PowerShell Command |
 |---|---|
+| **Launch GitHub Pages ONNX Web Demo (Local)** | `python -m http.server 8000 --directory docs` |
+| **Benchmark All Checkpoints on Test Set** | `python src/evaluate_checkpoints.py` |
+| **Export PyTorch Checkpoints to ONNX** | `python src/export_onnx.py` |
 | **Fine-Tune Best Model (Auto)** | `python src/transfer/train.py --fine-tune --epochs 10` |
 | **Fine-Tune Specific Architecture** | `python src/transfer/train.py --fine-tune --decoder-type mlp --epochs 10` |
 | **Fine-Tune Specific Checkpoint** | `python src/transfer/train.py --fine-tune checkpoints/resnet18_mlp_best.pt --epochs 10` |
 | **Train Stage 1 MLP Decoder** | `python src/transfer/train.py --decoder-type mlp --epochs 10` |
 | **Train Stage 1 Linear Head** | `python src/transfer/train.py --decoder-type linear --epochs 10` |
 | **Resume Interrupted Run** | `python src/transfer/train.py --resume auto` |
-| **Launch Gradio Web App** | `python hf_space/app.py` |
+| **Launch Local Gradio Demo** | `python hf_space/app.py` |
 | **Run All Unit & CLI Tests** | `pytest -v` |
 
 ---
@@ -224,20 +227,38 @@ Training is crash-resilient and multi-session continuous:
 
 ---
 
-## Interactive Web Demo (Gradio)
+## Interactive Web Demo: GitHub Pages & Gradio
 
-The repository includes a web application for classifying microscopic fungi images interactively:
+The project provides two interactive web demos for classifying microscopic fungal images:
+
+### 1. Primary Live Demo: GitHub Pages (`/docs` + ONNX Runtime Web)
+A high-performance, serverless client-side web application hosted on **GitHub Pages**:
+- **Zero server cold starts**: Models execute in-browser via WebAssembly / WebGL.
+- **Model switching**: Real-time evaluation with dropdown selection between:
+  - **Fine-Tuned MLP Champion** (91.11% Acc | 92.96% Macro F1)
+  - **Deeper 4-Layer MLP** (86.01% Acc | 87.98% Macro F1)
+  - **Linear Head Baseline** (66.21% Acc | 67.92% Macro F1)
+- **Zero data egress**: Images remain on client machine for clinical privacy.
+- **Permanent URL**: Hosted directly from the `/docs` folder on GitHub.
+
+```powershell
+# Launch the GitHub Pages web demo locally
+python -m http.server 8000 --directory docs
+```
+Open your browser to: **`http://localhost:8000`**
+
+For complete deployment instructions, see [`DEPLOYMENT_GITHUB_PAGES.md`](file:///c:/Users/novojiac/gitOrganized/MA416Project/DEPLOYMENT_GITHUB_PAGES.md).
+
+---
+
+### 2. Alternative Demo: Local Gradio (`hf_space/app.py`)
+A Python-native Gradio interface that can also be deployed to Hugging Face Spaces:
 
 ```powershell
 # Launch the Gradio app
 python hf_space/app.py
 ```
 Open your browser to: **`http://127.0.0.1:7860`**
-
-Features:
-- Select between model checkpoints (Linear, MLP, Fine-Tuned).
-- Drag-and-drop any microscopic fungal image or click sample images.
-- Real-time prediction probability distribution and scientific species information.
 
 For Hugging Face Spaces deployment instructions, see [`hf_space/DEPLOYMENT.md`](file:///c:/Users/novojiac/gitOrganized/MA416Project/hf_space/DEPLOYMENT.md).
 
