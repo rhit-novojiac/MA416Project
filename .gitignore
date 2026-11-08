@@ -33,6 +33,7 @@ env/
 
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints/
+saved_models/
 *-checkpoint.ipynb
 
 # PyTorch / Deep Learning model weights & checkpoints
@@ -43,6 +44,7 @@ env/
 *.h5
 *.ckpt
 checkpoints/
+saved_models/
 runs/
 wandb/
 

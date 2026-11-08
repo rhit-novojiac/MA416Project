@@ -110,17 +110,27 @@ def get_model(model_choice: str) -> nn.Module:
         return _CACHED_MODELS[cache_key]
 
     filename = f"resnet18_{decoder_type}_finetuned_best.pt" if is_ft else f"resnet18_{decoder_type}_best.pt"
-    ckpt_path = CHECKPOINT_DIR / filename
-    if not ckpt_path.exists():
-        # Fallback to local root checkpoints if run from repo root
-        ckpt_path = _BASE_DIR.parent / "checkpoints" / filename
+    # Search order: local hf_space/checkpoints -> saved_models -> checkpoints
+    search_dirs = [
+        CHECKPOINT_DIR,
+        _BASE_DIR.parent / "saved_models",
+        _BASE_DIR.parent / "checkpoints"
+    ]
+    ckpt_path = None
+    for d in search_dirs:
+        cand = d / filename
+        if cand.exists():
+            ckpt_path = cand
+            break
 
-    if not ckpt_path.exists() and is_ft:
-        # Fallback to base if finetuned not found
-        filename = f"resnet18_{decoder_type}_best.pt"
-        ckpt_path = CHECKPOINT_DIR / filename
-        if not ckpt_path.exists():
-            ckpt_path = _BASE_DIR.parent / "checkpoints" / filename
+    if ckpt_path is None and is_ft:
+        # Fallback to base model if finetuned not found
+        fallback_name = f"resnet18_{decoder_type}_best.pt"
+        for d in search_dirs:
+            cand = d / fallback_name
+            if cand.exists():
+                ckpt_path = cand
+                break
 
     if not ckpt_path.exists():
         raise FileNotFoundError(f"Checkpoint not found at {ckpt_path}")

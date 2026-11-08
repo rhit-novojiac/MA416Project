@@ -25,9 +25,10 @@ Open your browser to: **`http://localhost:8000`**
 - **Client-Side WebAssembly (WASM)**: Inference runs locally in the browser with zero cloud server dependencies.
 - **Model Switching**: Compare in real-time between:
   1. **3-Layer Decoder (Fine-Tuned Champion)** &bull; **91.11%** Test Accuracy, **92.96%** Macro F1
-  2. **4-Layer Decoder** &bull; **86.01%** Test Accuracy, **87.98%** Macro F1
-  3. **2-Layer Decoder** &bull; **78.77%** Test Accuracy, **82.14%** Macro F1
-  4. **1-Layer Decoder (Baseline)** &bull; **66.21%** Test Accuracy, **67.92%** Macro F1
+  2. **2-Layer Decoder (Fine-Tuned)** &bull; **89.25%** Test Accuracy, **91.75%** Macro F1
+  3. **4-Layer Decoder** &bull; **86.01%** Test Accuracy, **87.98%** Macro F1
+  4. **2-Layer Decoder (Stage 1)** &bull; **78.77%** Test Accuracy, **82.14%** Macro F1
+  5. **1-Layer Decoder (Baseline)** &bull; **66.21%** Test Accuracy, **67.92%** Macro F1
 - **Click-to-Test Sample Gallery**: Instant evaluation on preloaded microscopic examples (H1, H2, H3, H5, H6).
 - **Drag-and-Drop / Clipboard**: Upload any external microscopic fungi image or paste directly from clipboard.
 - **Interactive Probabilities & Clinical Notes**: Real-time confidence bars and scientific descriptions for dermatophyte species.

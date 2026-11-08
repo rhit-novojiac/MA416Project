@@ -35,11 +35,14 @@
             <option value="models/resnet18_mlp_deep_finetuned_best.onnx" selected>
               3-Layer Decoder (Fine-Tuned Champion) — 91.11% Acc | 92.96% F1
             </option>
+            <option value="models/resnet18_mlp_finetuned_best.onnx">
+              2-Layer Decoder (Fine-Tuned) — 89.25% Acc | 91.75% F1
+            </option>
             <option value="models/resnet18_mlp_deeper_best.onnx">
               4-Layer Decoder — 86.01% Acc | 87.98% F1
             </option>
             <option value="models/resnet18_mlp_best.onnx">
-              2-Layer Decoder — 78.77% Acc | 82.14% F1
+              2-Layer Decoder (Stage 1) — 78.77% Acc | 82.14% F1
             </option>
             <option value="models/resnet18_linear_best.onnx">
               1-Layer Decoder (Baseline) — 66.21% Acc | 67.92% F1
@@ -208,6 +211,14 @@
               <td>ONNX Runtime Web (WASM)</td>
             </tr>
             <tr>
+              <td><strong>2-Layer Decoder (Fine-Tuned)</strong></td>
+              <td>Stage 2 Backbone Fine-Tuning (Layer 4)</td>
+              <td><span class="metric-badge">89.25%</span></td>
+              <td><span class="metric-badge">91.75%</span></td>
+              <td>90.42%</td>
+              <td>ONNX Runtime Web (WASM)</td>
+            </tr>
+            <tr>
               <td><strong>4-Layer Decoder</strong></td>
               <td>Stage 1 Feature Extraction</td>
               <td><span class="metric-badge">86.01%</span></td>
@@ -216,7 +227,7 @@
               <td>ONNX Runtime Web (WASM)</td>
             </tr>
             <tr>
-              <td><strong>2-Layer Decoder</strong></td>
+              <td><strong>2-Layer Decoder (Stage 1)</strong></td>
               <td>Stage 1 Feature Extraction</td>
               <td><span class="metric-badge">78.77%</span></td>
               <td><span class="metric-badge">82.14%</span></td>

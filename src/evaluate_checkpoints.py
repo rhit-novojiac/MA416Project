@@ -111,7 +111,7 @@ def evaluate_checkpoint(
 
 def main():
     root = Path(__file__).resolve().parent.parent
-    ckpt_dir = root / "checkpoints"
+    ckpt_dir = root / "saved_models" if (root / "saved_models").exists() else root / "checkpoints"
     plots_dir = root / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
     
@@ -127,6 +127,7 @@ def main():
     models_to_eval = [
         ckpt_dir / "resnet18_linear_best.pt",
         ckpt_dir / "resnet18_mlp_best.pt",
+        ckpt_dir / "resnet18_mlp_finetuned_best.pt",
         ckpt_dir / "resnet18_mlp_deeper_best.pt",
         ckpt_dir / "resnet18_mlp_deep_finetuned_best.pt"
     ]
