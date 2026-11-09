@@ -119,6 +119,29 @@
               <span><strong>Case 2 (True: H1)</strong>: <em>Only Champion Wins</em></span>
             </button>
           </div>
+
+          <!-- 100-Image Random Gallery from DeFungi -->
+          <div class="gallery-section" style="margin-top: 18px;">
+            <div class="gallery-header">
+              <h3>📂 100 Random DeFungi Test Images:</h3>
+              <div class="gallery-filter-chips">
+                <button class="filter-chip active" data-filter="all">All (100)</button>
+                <button class="filter-chip" data-filter="H1">H1 (20)</button>
+                <button class="filter-chip" data-filter="H2">H2 (20)</button>
+                <button class="filter-chip" data-filter="H3">H3 (20)</button>
+                <button class="filter-chip" data-filter="H5">H5 (20)</button>
+                <button class="filter-chip" data-filter="H6">H6 (20)</button>
+              </div>
+            </div>
+            <p class="section-desc" style="margin-bottom: 8px; font-size: 0.8rem;">
+              Click any image below to load and classify it in real-time. (Balanced sample: 20 per class).
+            </p>
+            <div class="gallery-scroll-container" id="galleryContainer">
+              <div class="gallery-grid" id="galleryGrid">
+                <!-- Populated dynamically by app.js -->
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 

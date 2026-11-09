@@ -355,8 +355,59 @@ sampleButtons.forEach((btn) => {
   });
 });
 
+// Gallery logic for 100 random DeFungi test images
+const galleryGrid = document.getElementById("galleryGrid");
+const filterChips = document.querySelectorAll(".filter-chip");
+let allGalleryItems = [];
+
+async function initGallery() {
+  if (!galleryGrid) return;
+  try {
+    const res = await fetch("gallery/manifest.json");
+    if (!res.ok) return;
+    allGalleryItems = await res.json();
+    renderGallery("all");
+  } catch (err) {
+    console.warn("Could not load gallery manifest:", err);
+  }
+}
+
+function renderGallery(filterClass) {
+  if (!galleryGrid) return;
+  galleryGrid.innerHTML = "";
+  const filtered = filterClass === "all" 
+    ? allGalleryItems 
+    : allGalleryItems.filter(item => item.class === filterClass);
+
+  filtered.forEach(item => {
+    const btn = document.createElement("button");
+    btn.className = "gallery-item";
+    btn.title = `True Class: ${item.class} (${CLASS_INFO[item.class]?.name || item.class}) - ${item.original_name}`;
+    btn.innerHTML = `
+      <img src="${item.src}" alt="${item.class}" loading="lazy">
+      <span class="gallery-badge">${item.class}</span>
+    `;
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".gallery-item").forEach(el => el.classList.remove("active-item"));
+      btn.classList.add("active-item");
+      displayImage(item.src);
+    });
+    galleryGrid.appendChild(btn);
+  });
+}
+
+filterChips.forEach(chip => {
+  chip.addEventListener("click", () => {
+    filterChips.forEach(c => c.classList.remove("active-item", "active"));
+    chip.classList.add("active");
+    renderGallery(chip.getAttribute("data-filter"));
+  });
+});
+
 // Initial startup
 window.addEventListener("DOMContentLoaded", () => {
   loadModel(modelSelect.value);
+  initGallery();
 });
+
 
