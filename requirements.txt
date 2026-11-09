@@ -22,4 +22,5 @@ pytest
 
 # Web App Demo & Deployment
 gradio
+onnx
 
