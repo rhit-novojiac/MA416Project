@@ -70,6 +70,16 @@ MA416Project/
     └── H6/   (1,167 images) - Microsporum gypseum
 ```
 
+### Step-by-Step Dataset Download Options
+1. **Option 1 (Web Browser):**
+   - Download the archive directly from the [Kaggle DeFungi Dataset](https://www.kaggle.com/datasets/waleko/defungi) page.
+   - Extract the downloaded archive into the repository root so that the folder is named `defungi/` with the five subfolders `H1`, `H2`, `H3`, `H5`, and `H6`.
+2. **Option 2 (Kaggle CLI):**
+   ```bash
+   kaggle datasets download -d waleko/defungi
+   unzip defungi.zip -d defungi/
+   ```
+
 *Total dataset size:* **9,114 images**. The data loader automatically splits the data into an **80% training set (7,291 images)** and a **20% test set (1,823 images)** using a fixed random seed (`seed=42`) with stratified class distribution to guarantee exact reproducibility across all experiments.
 
 > [!NOTE]
