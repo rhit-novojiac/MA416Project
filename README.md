@@ -27,6 +27,7 @@
    - [Alternative Demo: Gradio UI](#alternative-demo-gradio-ui)
 8. [Automated Testing & Verification](#8-automated-testing--verification)
 9. [Repository Directory Structure](#9-repository-directory-structure)
+10. [AI Disclosure](#10-ai-disclosure)
 
 ---
 
@@ -362,3 +363,21 @@ MA416Project/
     ├── app.py                      # Gradio UI application
     └── model_utils.py              # Checkpoint inference logic
 ```
+
+---
+
+## 10. AI Disclosure
+
+Claude, ChatGPT, Copilot and Gemini were all used at some points during this project. Copilot and Gemini were used Agentically, while the other two were used Conversationally. AI was used extensively in these areas: debugging, file setup, planning, documentation and the web demo. Because we thought it would be easier to make the code changeable using straight python, instead of Jupyter notebooks, we made the code in python files, and all of us had unique problems getting it to work on our machines. AI was used extensively in debugging those issues. Also, as we tried to add new changes to the model or other code, we would constantly run into issues we haven't encountered in class, and AI was used to help debug those, which saved a lot of time because some of the error messages where quite confusing. 
+
+As mentioned before, we tried to do everything in python files, and AI was used to create the scaffolding in these areas, especially in the locations of checkpointing, so that we can resume our training loops from where we left off. It certainly made it easier for us since we think that having to go through the full process of designing and implementing the checkpoint/resume system would have taken a lot of time to get right and cost us multiple models of training worth of time. Also, AI was used with setting up some more new args that torch could take (like dropouts) which we haven't discussed in class and we wanted to try using.
+
+In line with the new args, we used AI to help with the planning/brainstorming process of the project. Essentially, whenever we had something potentially new that we were dealing with, we would ask AI for its thoughts on the matter and then we would as a group discuss its opinion on things. This is how we decided to go with dropouts, for example. We made sure that everything that AI planned was a) discussed as a group before deciding to truly commit to it, and b) that it wasn't making core decisions for us regarding any aspect of the project, code, or anything related. It was meant to provide ideas and help us implement them faster, not do the work for us. 
+
+We had AI do the documentation work on the project. Since none of us have extensive experience with Markdown, and AI can be thorough with documentation, we had it handle that part of the project since we figured it wouldn't impact our learning to have AI write the instructions for us to run our code in a .md as opposed to us just writing it down ourselves in a notepad (or .md).
+
+None of us have real experience with WebDev and so we worked with AI to create the demo. We thought up of what we want on the website, how we want the demo to flow, and what the features of it should have, and then had AI code it and revise it until we were satisfied with the website. This saved us a lot of time since Huggingface now wants card info to host on it and we were not comfortable providing it and AI made the switch to GitHub pages easy for us.
+
+AI was used to generate plots and print-outs for us to use. It was able to format them well easily and allowed us to quickly compare our results right after running training.
+
+AI was worked with (quite heavily as it is really bad with images) to create proper displays of our architecure as a visual for our slides. To create this we told AI how our model works, and them kept on going back and forth until it created a clean, CORRECT image of the architecture. 
